@@ -1,148 +1,154 @@
 import streamlit as st
 import yt_dlp
 import os
-import tempfile
+import shutil
+import time
+from pathlib import Path
+import zipfile
+
+# ── 設定 ──
+DOWNLOAD_DIR = "downloads"
+COOKIES_FILE = "cookies.txt"
 
 # ページ設定
 st.set_page_config(page_title="動画ダウンローダー", layout="centered")
 st.title("🎥 動画/音声 ダウンローダー")
-st.write("YouTube や ニコニコ動画の URL を入力してダウンロードできます。")
+st.write("YouTube や ニコニコ動画の URL から動画・音声を変換してダウンロードします。")
 
-# ── サイドバー設定 ──
-st.sidebar.header("設定")
+# ── 関数定義 ──
 
-# フォーマット選択
-format_option = st.sidebar.selectbox(
-    "フォーマット",
-    options=['mp3', 'm4a', 'wav'],
-    index=0
-)
+def cleanup_files():
+    """以前のダウンロードファイルを削除"""
+    if os.path.exists(DOWNLOAD_DIR):
+        shutil.rmtree(DOWNLOAD_DIR)
+    os.makedirs(DOWNLOAD_DIR, exist_ok=True)
+    if os.path.exists(COOKIES_FILE):
+        os.remove(COOKIES_FILE)
 
-# 音質選択
-quality_option = st.sidebar.selectbox(
-    "音質 (0が最高)",
-    options=['0', '1', '5'],
-    index=0
-)
+def zip_files(directory):
+    """ディレクトリ内のファイルをZIPにまとめる"""
+    zip_path = "download_files.zip"
+    with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+        for root, _, files in os.walk(directory):
+            for file in files:
+                zipf.write(os.path.join(root, file), file)
+    return zip_path
 
-# サムネイル埋め込み
-embed_thumbnail = st.sidebar.checkbox(
-    "サムネイルを埋め込む",
-    value=True,
-    help="WAV形式では機能しない場合があります"
-)
+# ── UI 構成 ──
 
-# ── メインエリア ──
-url_input = st.text_area(
-    "URL入力欄 (改行区切りで複数可)",
-    height=150,
-    placeholder="https://www.youtube.com/watch?v=..."
-)
+with st.form("input_form"):
+    url_text = st.text_area("URL入力欄 (改行区切り)", height=100, placeholder="https://www.youtube.com/watch?v=...")
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        format_select = st.selectbox("フォーマット", options=['mp3', 'm4a', 'wav', 'mp4 (動画)'], index=0)
+    with col2:
+        quality_select = st.selectbox("音質/画質", options=['0 (最高)', '5 (標準)', '9 (低)'], index=0)
+    
+    embed_thumb = st.checkbox("サムネイル埋め込み (音声のみ)", value=True)
+    
+    uploaded_cookie = st.file_uploader("Cookies.txt (任意・ニコニコ等用)", type=['txt'])
+    
+    submitted = st.form_submit_button("変換・ダウンロード開始", type="primary")
 
-# 処理実行ボタン
-if st.button("変換・ダウンロード準備を開始", type="primary"):
-    urls = [u.strip() for u in url_input.splitlines() if u.strip()]
+# ── 処理実行 ──
 
-    if not urls:
-        st.error("URL が入力されていません。")
-    else:
-        progress_bar = st.progress(0)
-        status_text = st.empty()
+if submitted and url_text:
+    cleanup_files() # リセット
+    
+    # Cookieの保存
+    cookie_path = None
+    if uploaded_cookie is not None:
+        with open(COOKIES_FILE, "wb") as f:
+            f.write(uploaded_cookie.getbuffer())
+        cookie_path = COOKIES_FILE
 
-        # 一時ディレクトリを作成して処理
-        with tempfile.TemporaryDirectory() as tmpdir:
+    urls = [line.strip() for line in url_text.splitlines() if line.strip()]
+    
+    progress_text = st.empty()
+    progress_bar = st.progress(0)
+    log_area = st.expander("処理ログ", expanded=True)
+    
+    downloaded_files = []
+
+    with log_area:
+        for i, url in enumerate(urls):
+            progress_text.text(f"処理中 ({i+1}/{len(urls)}): {url}")
+            st.write(f"▶ {url} の処理を開始...")
             
-            # ── Cookie 自動読み込み処理 ──
-            cookie_path = None
-            try:
-                # Streamlit Secrets から cookie_data を取得
-                if "cookie_data" in st.secrets["general"]:
-                    cookie_content = st.secrets["general"]["cookie_data"]
-                    cookie_path = os.path.join(tmpdir, "cookies.txt")
-                    
-                    # Cookieファイルを一時作成
-                    with open(cookie_path, "w", encoding="utf-8") as f:
-                        f.write(cookie_content)
-                    
-                    # ユーザーには見えないようにコンソールにだけログ出力
-                    print("✅ Cookies loaded from Secrets.")
-                else:
-                    print("⚠️ No cookies found in Secrets.")
-            except Exception as e:
-                # エラーでも停止せず、Cookieなしで続行を試みる
-                print(f"⚠️ Cookie loading skipped: {e}")
-            # ──────────────────────────
-
-            # yt-dlp オプション設定
+            # オプション設定
+            is_video = 'mp4' in format_select
+            fmt_clean = format_select.split(' ')[0] # 'mp4 (動画)' -> 'mp4'
+            
             ydl_opts = {
-                'format': 'bestaudio/best',
-                'outtmpl': f'{tmpdir}/%(title)s.%(ext)s',
-                'postprocessors': [{
-                    'key': 'FFmpegExtractAudio',
-                    'preferredcodec': format_option,
-                    'preferredquality': quality_option,
-                }],
+                'outtmpl': f'{DOWNLOAD_DIR}/%(title)s.%(ext)s',
                 'quiet': True,
                 'no_warnings': True,
-                # ブラウザ偽装（念のため残す）
-                'nocheckcertificate': True,
-                'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
             }
 
-            # WAV以外かつチェックありならサムネイル埋め込み
-            if embed_thumbnail and format_option != 'wav':
-                ydl_opts['writethumbnail'] = True
-                ydl_opts['postprocessors'].append({'key': 'EmbedThumbnail'})
-                ydl_opts['postprocessors'].append({'key': 'FFmpegMetadata'})
-
-            # 自動生成したCookieパスを渡す
             if cookie_path:
                 ydl_opts['cookiefile'] = cookie_path
 
-            # ダウンロード処理ループ
-            processed_files = []
-            
-            for i, url in enumerate(urls):
-                status_text.text(f"処理中 ({i+1}/{len(urls)}): {url}")
-                try:
-                    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                        info = ydl.extract_info(url, download=True)
-                        title = info.get('title', 'video')
-                        
-                        # 生成されたファイルを探す
-                        for file_name in os.listdir(tmpdir):
-                            if file_name.endswith(f".{format_option}"):
-                                full_path = os.path.join(tmpdir, file_name)
-                                if full_path not in [x['path'] for x in processed_files]:
-                                    processed_files.append({
-                                        'title': title,
-                                        'path': full_path,
-                                        'name': file_name
-                                    })
-                except Exception as e:
-                    st.error(f"エラーが発生しました ({url}): {e}")
+            if is_video:
+                # 動画モード
+                ydl_opts['format'] = 'bestvideo+bestaudio/best'
+                ydl_opts['merge_output_format'] = 'mp4'
+            else:
+                # 音声モード
+                ydl_opts['format'] = 'bestaudio/best'
+                ydl_opts['postprocessors'] = [{
+                    'key': 'FFmpegExtractAudio',
+                    'preferredcodec': fmt_clean,
+                    'preferredquality': quality_select.split(' ')[0],
+                }]
                 
-                progress_bar.progress((i + 1) / len(urls))
+                # WAV以外ならサムネイル埋め込み
+                if embed_thumb and fmt_clean != 'wav':
+                    ydl_opts['writethumbnail'] = True
+                    ydl_opts['postprocessors'].append({'key': 'EmbedThumbnail'})
+                    ydl_opts['postprocessors'].append({'key': 'FFmpegMetadata'})
 
-            status_text.text("処理完了！以下のボタンからダウンロードしてください。")
-            progress_bar.progress(100)
-
-            st.success(f"{len(processed_files)} 個のファイルを生成しました。")
-            
-            for p_file in processed_files:
-                try:
-                    with open(p_file['path'], "rb") as f:
-                        file_data = f.read()
+            # ダウンロード実行
+            try:
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    info = ydl.extract_info(url, download=True)
+                    title = info.get('title', 'video')
+                    st.success(f"✔ 完了: {title}")
                     
-                    st.download_button(
-                        label=f"ダウンロード: {p_file['name']}",
-                        data=file_data,
-                        file_name=p_file['name'],
-                        mime=f"audio/{format_option}"
-                    )
-                except Exception as e:
-                    st.error(f"ファイル読み込みエラー: {e}")
+                    # サムネイル表示（任意）
+                    thumb = info.get('thumbnail')
+                    if thumb:
+                        st.image(thumb, width=150)
+                        
+            except Exception as e:
+                st.error(f"✖ エラー: {e}")
 
-# ── 注意書き ──
-st.markdown("---")
-st.caption("※ 生成されたファイルは一時保存され、再読み込みすると消去されます。")
+            progress_bar.progress((i + 1) / len(urls))
+
+    # ── ダウンロードボタンの表示 ──
+    files = os.listdir(DOWNLOAD_DIR)
+    if files:
+        st.success("すべての処理が完了しました！")
+        
+        # ファイルが1つの場合
+        if len(files) == 1:
+            file_path = os.path.join(DOWNLOAD_DIR, files[0])
+            with open(file_path, "rb") as f:
+                st.download_button(
+                    label=f"⬇ {files[0]} をダウンロード",
+                    data=f,
+                    file_name=files[0],
+                    mime="application/octet-stream"
+                )
+        # 複数ファイルの場合（ZIPにする）
+        else:
+            zip_path = zip_files(DOWNLOAD_DIR)
+            with open(zip_path, "rb") as f:
+                st.download_button(
+                    label="⬇ まとめてダウンロード (ZIP)",
+                    data=f,
+                    file_name="downloads.zip",
+                    mime="application/zip"
+                )
+    else:
+        st.warning("ダウンロードされたファイルが見つかりませんでした。")
