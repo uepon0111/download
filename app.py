@@ -8,7 +8,7 @@ import io
 import re
 
 # --- ページ設定 ---
-# 絵文字アイコン(page_icon)を削除
+# 絵文字アイコンを削除
 st.set_page_config(page_title="Audio Downloader Pro", layout="centered")
 
 # --- Font Awesome & カスタムCSSの注入 ---
@@ -74,9 +74,8 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # --- ヘッダー部分 ---
-# タイトル等をAudio向けに変更、アイコンはFont Awesomeを使用
-st.markdown('<div class="main-title"><i class="fa-solid fa-music icon-spacing"></i>Audio Downloader Pro</div>', unsafe_allow_html=True)
-st.markdown('<div class="sub-text">MP3一括変換・メタデータ編集</div>', unsafe_allow_html=True)
+st.markdown('<div class="main-title"><i class="fa-solid fa-cloud-arrow-down icon-spacing"></i>Audio Downloader Pro</div>', unsafe_allow_html=True)
+st.markdown('<div class="sub-text">MP3一括ダウンロード・編集・メタデータ管理</div>', unsafe_allow_html=True)
 
 # ── 内部関数: ファイル名サニタイズ ──
 def sanitize_filename(name):
@@ -102,10 +101,10 @@ def remove_video(index):
 with st.sidebar:
     st.markdown('### <i class="fa-solid fa-sliders icon-spacing"></i> 詳細設定', unsafe_allow_html=True)
     
-    # 形式はmp3固定のため選択肢削除
+    # 形式はMP3固定
     format_type = 'mp3'
     
-    # 音質設定のみ表示
+    # 音声用設定のみ表示
     st.markdown('**<i class="fa-solid fa-headphones icon-spacing"></i> 音質設定**', unsafe_allow_html=True)
     audio_quality_map = {
         '最高 (Best)': '0', 
@@ -135,7 +134,6 @@ class ProgressHooks:
             
             self.progress_bar.progress(min(per / 100, 1.0))
             speed = d.get('_speed_str', 'N/A')
-            # 絵文字削除、Font Awesome使用
             self.status_placeholder.markdown(f'<i class="fa-solid fa-spinner fa-spin"></i> ダウンロード中... {d["_percent_str"]} (速度: {speed})', unsafe_allow_html=True)
             
         elif d['status'] == 'finished':
@@ -180,40 +178,41 @@ def process_download(info_list):
             final_filename = sanitize_filename(info['custom_filename'])
             final_artist = info['custom_artist']
 
-            # アイコン使用
             main_status.markdown(f'<i class="fa-solid fa-list-check icon-spacing"></i> 処理中 ({idx+1}/{total_videos}): **{final_filename}**', unsafe_allow_html=True)
             
             single_status = st.empty()
             single_bar = st.progress(0)
             hooks = ProgressHooks(single_status, single_bar)
 
-            # MP3用の設定
+            # MP3出力設定
             ydl_opts = {
                 'outtmpl': f'{tmp_dir}/{final_filename}.%(ext)s',
                 'quiet': True,
                 'progress_hooks': [hooks.hook],
-                'format': 'bestaudio/best',
             }
             if cookie_path: ydl_opts['cookiefile'] = cookie_path
 
-            # 音声変換プロセッサ設定 (MP3固定)
-            postprocessors = [{'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3'}]
+            # 音声変換設定
+            postprocessors = [{'key': 'FFmpegExtractAudio','preferredcodec': 'mp3'}]
             if quality_val != '0':
                 postprocessors[0]['preferredquality'] = quality_val
             
-            # メタデータ設定
             if add_metadata:
                 postprocessors.append({
                     'key': 'FFmpegMetadata',
                     'add_metadata': True,
                 })
-                
-            ydl_opts['postprocessors'] = postprocessors
+            
+            # サムネイル埋め込み設定
+            if embed_thumb:
+                ydl_opts['writethumbnail'] = True
+                postprocessors.append({'key': 'EmbedThumbnail'})
+            
+            ydl_opts.update({'format': 'bestaudio/best', 'postprocessors': postprocessors})
 
             try:
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                     ydl.download([url])
-                # アイコン使用
                 single_status.markdown('<i class="fa-solid fa-circle-check" style="color:#00ff88"></i> 完了', unsafe_allow_html=True)
             except Exception as e:
                 single_status.error(f"エラー: {e}")
@@ -221,15 +220,11 @@ def process_download(info_list):
             
             main_progress.progress((idx + 1) / total_videos)
 
-        # ファイル回収 (mp3のみ)
+        # ファイル回収 (MP3のみ)
         files = [f for f in os.listdir(tmp_dir) if f.endswith(".mp3")]
         for filename in files:
             with open(os.path.join(tmp_dir, filename), "rb") as f:
-                downloaded_data.append({
-                    "filename": filename, 
-                    "data": f.read(), 
-                    "mime": "audio/mpeg"
-                })
+                downloaded_data.append({"filename": filename, "data": f.read(), "mime": "audio/mpeg"})
 
         # ZIP作成
         if len(files) > 0:
@@ -290,7 +285,10 @@ if st.session_state.stage == 'preview':
             col_img, col_edit, col_del = st.columns([1.5, 3, 0.5])
             
             with col_img:
-                st.image(info['thumbnail'], use_container_width=True)
+                if info['thumbnail']:
+                    st.image(info['thumbnail'], use_container_width=True)
+                else:
+                    st.markdown('<div style="height:100px; background:#333; display:flex; align-items:center; justify-content:center; color:#666;">No Image</div>', unsafe_allow_html=True)
                 duration_m = info['duration'] // 60 if info['duration'] else 0
                 duration_s = info['duration'] % 60 if info['duration'] else 0
                 st.caption(f"長さ: {duration_m}:{duration_s:02d}")
@@ -314,8 +312,8 @@ if st.session_state.stage == 'preview':
 
             with col_del:
                 st.markdown("<br>", unsafe_allow_html=True)
-                # 絵文字削除、テキストボタンに変更
-                if st.button("削除", key=f"del_{idx}", type="secondary"):
+                # 絵文字ボタンをテキストに変更
+                if st.button("削除", key=f"del_{idx}", help="リストから削除", type="secondary"):
                     remove_video(idx)
                     st.rerun()
 
@@ -351,9 +349,9 @@ if st.session_state.stage == 'finished':
     st.markdown('### <i class="fa-solid fa-download icon-spacing"></i> 3. ダウンロード', unsafe_allow_html=True)
     
     if st.session_state.zip_data:
-        # 絵文字削除
+        # 絵文字ラベルを変更
         st.download_button(
-            label="ZIPで保存",
+            label="ZIPでまとめて保存",
             data=st.session_state.zip_data,
             file_name="audio_archive.zip",
             mime="application/zip",
@@ -367,8 +365,8 @@ if st.session_state.stage == 'finished':
         
         col_dl_1, col_dl_2 = st.columns([3, 1])
         with col_dl_1:
-            # 絵文字削除、Font Awesomeアイコンを使用
-            st.markdown(f'<i class="fa-solid fa-music"></i> **{item["filename"]}** ({size_mb:.1f} MB)', unsafe_allow_html=True)
+            # 絵文字をFont Awesomeアイコンに変更
+            st.markdown(f'<i class="fa-solid fa-file-audio icon-spacing"></i>**{item["filename"]}** ({size_mb:.1f} MB)', unsafe_allow_html=True)
         with col_dl_2:
             st.download_button(
                 label="保存",
