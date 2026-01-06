@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>YouTube Downloader Controller</title>
+    <style>
+        body { font-family: sans-serif; max-width: 600px; margin: 2rem auto; padding: 0 1rem; }
+        .group { margin-bottom: 1rem; }
+        label { display: block; margin-bottom: .5rem; font-weight: bold; }
+        input, textarea, select { width: 100%; padding: .5rem; box-sizing: border-box; }
+        textarea { height: 100px; }
+        button { width: 100%; padding: 1rem; background: #007bff; color: white; border: none; cursor: pointer; font-size: 1rem; }
+        button:disabled { background: #ccc; }
+        #status { margin-top: 1rem; padding: 1rem; background: #f0f0f0; border-radius: 4px; display: none; }
+        .note { font-size: 0.8rem; color: #666; margin-top: 0.2rem; }
+    </style>
+</head>
+<body>
+    <h1>YouTube Downloader</h1>
+
+    <div class="group">
+        <label>GitHubユーザー名 / リポジトリ名</label>
+        <input type="text" id="repoInfo" placeholder="例: yourname/repo-name">
+    </div>
+
+    <div class="group">
+        <label>Personal Access Token (PAT)</label>
+        <input type="password" id="token" placeholder="ghp_xxxxxxxxxxxx...">
+        <div class="note">※Actions権限を持つトークンが必要です。ブラウザには保存されません。</div>
+    </div>
+
+    <hr>
+
+    <div class="group">
+        <label>動画URL (改行区切り)</label>
+        <textarea id="urls" placeholder="https://www.youtube.com/watch?v=..."></textarea>
+    </div>
+
+    <div class="group">
+        <label>フォーマット</label>
+        <select id="format">
+            <option value="mp3">MP3</option>
+            <option value="m4a">M4A</option>
+            <option value="wav">WAV</option>
+        </select>
+    </div>
+
+    <div class="group">
+        <label>音質</label>
+        <select id="quality">
+            <option value="0">最高 (0)</option>
+            <option value="5">標準 (5)</option>
+        </select>
+    </div>
+
+    <button id="runBtn" onclick="triggerAction()">ダウンロード開始</button>
+
+    <div id="status"></div>
+
+    <script>
+        async function triggerAction() {
+            const repo = document.getElementById('repoInfo').value.trim();
+            const token = document.getElementById('token').value.trim();
+            const urls = document.getElementById('urls').value.trim();
+            const format = document.getElementById('format').value;
+            const quality = document.getElementById('quality').value;
+            const statusDiv = document.getElementById('status');
+            const btn = document.getElementById('runBtn');
+
+            if (!repo || !token || !urls) {
+                alert("リポジトリ名、トークン、URLは必須です。");
+                return;
+            }
+
+            btn.disabled = true;
+            statusDiv.style.display = 'block';
+            statusDiv.textContent = "GitHubへリクエスト送信中...";
+
+            // APIエンドポイント
+            const url = `https://api.github.com/repos/${repo}/actions/workflows/download.yml/dispatches`;
+
+            try {
+                const response = await fetch(url, {
+                    method: 'POST',
+                    headers: {
+                        'Accept': 'application/vnd.github.v3+json',
+                        'Authorization': `token ${token}`,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        ref: 'main', // ブランチ名
+                        inputs: {
+                            urls: urls,
+                            format: format,
+                            quality: quality
+                        }
+                    })
+                });
+
+                if (response.ok) {
+                    statusDiv.innerHTML = `
+                        <strong>✔ リクエスト成功！</strong><br>
+                        処理が開始されました。<br>
+                        1〜2分後にGitHubのリポジトリの「Actions」タブを確認してください。<br>
+                        完了すると「Artifacts」からファイルをダウンロードできます。<br>
+                        <a href="https://github.com/${repo}/actions" target="_blank">Actionsページを開く</a>
+                    `;
+                } else {
+                    const err = await response.json();
+                    statusDiv.textContent = `✖ エラー: ${response.status} - ${err.message || 'Unknown error'}`;
+                }
+            } catch (e) {
+                statusDiv.textContent = `✖ 通信エラー: ${e.message}`;
+            } finally {
+                btn.disabled = false;
+            }
+        }
+    </script>
+</body>
+</html>
