@@ -2,7 +2,6 @@ import streamlit as st
 import yt_dlp
 import os
 import tempfile
-import shutil
 
 # ページ設定
 st.set_page_config(page_title="動画ダウンローダー", layout="centered")
@@ -33,14 +32,6 @@ embed_thumbnail = st.sidebar.checkbox(
     help="WAV形式では機能しない場合があります"
 )
 
-# Cookies アップロード
-st.sidebar.markdown("---")
-uploaded_cookie = st.sidebar.file_uploader(
-    "Cookies.txt (ニコニコ等用)", 
-    type=['txt'],
-    help="ログインが必要な動画の場合に使用します"
-)
-
 # ── メインエリア ──
 url_input = st.text_area(
     "URL入力欄 (改行区切りで複数可)",
@@ -55,19 +46,32 @@ if st.button("変換・ダウンロード準備を開始", type="primary"):
     if not urls:
         st.error("URL が入力されていません。")
     else:
-        # 進行状況バー
         progress_bar = st.progress(0)
         status_text = st.empty()
 
         # 一時ディレクトリを作成して処理
         with tempfile.TemporaryDirectory() as tmpdir:
             
-            # Cookieファイルの一時保存処理
+            # ── Cookie 自動読み込み処理 ──
             cookie_path = None
-            if uploaded_cookie is not None:
-                cookie_path = os.path.join(tmpdir, "cookies.txt")
-                with open(cookie_path, "wb") as f:
-                    f.write(uploaded_cookie.getvalue())
+            try:
+                # Streamlit Secrets から cookie_data を取得
+                if "cookie_data" in st.secrets["general"]:
+                    cookie_content = st.secrets["general"]["cookie_data"]
+                    cookie_path = os.path.join(tmpdir, "cookies.txt")
+                    
+                    # Cookieファイルを一時作成
+                    with open(cookie_path, "w", encoding="utf-8") as f:
+                        f.write(cookie_content)
+                    
+                    # ユーザーには見えないようにコンソールにだけログ出力
+                    print("✅ Cookies loaded from Secrets.")
+                else:
+                    print("⚠️ No cookies found in Secrets.")
+            except Exception as e:
+                # エラーでも停止せず、Cookieなしで続行を試みる
+                print(f"⚠️ Cookie loading skipped: {e}")
+            # ──────────────────────────
 
             # yt-dlp オプション設定
             ydl_opts = {
@@ -80,6 +84,9 @@ if st.button("変換・ダウンロード準備を開始", type="primary"):
                 }],
                 'quiet': True,
                 'no_warnings': True,
+                # ブラウザ偽装（念のため残す）
+                'nocheckcertificate': True,
+                'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
             }
 
             # WAV以外かつチェックありならサムネイル埋め込み
@@ -88,6 +95,7 @@ if st.button("変換・ダウンロード準備を開始", type="primary"):
                 ydl_opts['postprocessors'].append({'key': 'EmbedThumbnail'})
                 ydl_opts['postprocessors'].append({'key': 'FFmpegMetadata'})
 
+            # 自動生成したCookieパスを渡す
             if cookie_path:
                 ydl_opts['cookiefile'] = cookie_path
 
@@ -100,11 +108,11 @@ if st.button("変換・ダウンロード準備を開始", type="primary"):
                     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                         info = ydl.extract_info(url, download=True)
                         title = info.get('title', 'video')
-                        # 生成されたファイルを探す（拡張子が確定しない場合があるため検索）
+                        
+                        # 生成されたファイルを探す
                         for file_name in os.listdir(tmpdir):
                             if file_name.endswith(f".{format_option}"):
                                 full_path = os.path.join(tmpdir, file_name)
-                                # リストに追加済みのファイルでなければ追加
                                 if full_path not in [x['path'] for x in processed_files]:
                                     processed_files.append({
                                         'title': title,
@@ -119,7 +127,6 @@ if st.button("変換・ダウンロード準備を開始", type="primary"):
             status_text.text("処理完了！以下のボタンからダウンロードしてください。")
             progress_bar.progress(100)
 
-            # ダウンロードボタンの表示
             st.success(f"{len(processed_files)} 個のファイルを生成しました。")
             
             for p_file in processed_files:
@@ -139,4 +146,3 @@ if st.button("変換・ダウンロード準備を開始", type="primary"):
 # ── 注意書き ──
 st.markdown("---")
 st.caption("※ 生成されたファイルは一時保存され、再読み込みすると消去されます。")
-st.caption("※ 著作権法および各サイトの利用規約を遵守してご利用ください。")
