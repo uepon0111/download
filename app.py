@@ -13,7 +13,8 @@ COOKIES_FILE = "cookies.txt"
 # ページ設定
 st.set_page_config(page_title="動画ダウンローダー", layout="centered")
 st.title("🎥 動画/音声 ダウンローダー")
-st.write("YouTube や ニコニコ動画の URL から動画・音声を変換してダウンロードします。")
+st.write("Streamlit Cloud 上で動作します。YouTube の制限によりダウンロードが不安定な場合があります。")
+st.info("💡 うまくいかない場合は、ブラウザの Cookie ファイルをアップロードする方法を試してください。最も確実です。")
 
 # ── 関数定義 ──
 
@@ -22,8 +23,9 @@ def cleanup_files():
     if os.path.exists(DOWNLOAD_DIR):
         shutil.rmtree(DOWNLOAD_DIR)
     os.makedirs(DOWNLOAD_DIR, exist_ok=True)
-    if os.path.exists(COOKIES_FILE):
-        os.remove(COOKIES_FILE)
+    # cookiesは保持する
+    # if os.path.exists(COOKIES_FILE):
+    #     os.remove(COOKIES_FILE)
 
 def zip_files(directory):
     """ディレクトリ内のファイルをZIPにまとめる"""
@@ -31,7 +33,8 @@ def zip_files(directory):
     with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
         for root, _, files in os.walk(directory):
             for file in files:
-                zipf.write(os.path.join(root, file), file)
+                if file != zip_path:
+                    zipf.write(os.path.join(root, file), file)
     return zip_path
 
 # ── UI 構成 ──
@@ -47,7 +50,7 @@ with st.form("input_form"):
     
     embed_thumb = st.checkbox("サムネイル埋め込み (音声のみ)", value=True)
     
-    uploaded_cookie = st.file_uploader("Cookies.txt (任意・ニコニコ等用)", type=['txt'])
+    uploaded_cookie = st.file_uploader("Cookies.txt (推奨・エラー回避用)", type=['txt'], help="YouTubeの制限を回避するために、ブラウザのcookies.txtをアップロードすることを強く推奨します。")
     
     submitted = st.form_submit_button("変換・ダウンロード開始", type="primary")
 
@@ -62,49 +65,46 @@ if submitted and url_text:
         with open(COOKIES_FILE, "wb") as f:
             f.write(uploaded_cookie.getbuffer())
         cookie_path = COOKIES_FILE
+        st.success("Cookieファイルを適用しました。")
 
     urls = [line.strip() for line in url_text.splitlines() if line.strip()]
     
     progress_text = st.empty()
     progress_bar = st.progress(0)
-    log_area = st.expander("処理ログ", expanded=True)
+    log_area = st.expander("処理ログ (デバッグ情報)", expanded=True)
     
-    downloaded_files = []
-
     with log_area:
         for i, url in enumerate(urls):
             progress_text.text(f"処理中 ({i+1}/{len(urls)}): {url}")
-            st.write(f"▶ {url} の処理を開始...")
+            st.write(f"---")
+            st.write(f"▶ **開始**: `{url}`")
             
             # オプション設定
             is_video = 'mp4' in format_select
             fmt_clean = format_select.split(' ')[0] # 'mp4 (動画)' -> 'mp4'
             
+            # 基本オプション
             ydl_opts = {
                 'outtmpl': f'{DOWNLOAD_DIR}/%(title)s.%(ext)s',
-                'quiet': True,
+                'quiet': False, # ログを出すように変更
                 'no_warnings': True,
-                # エラー回避のための追加設定
                 'nocheckcertificate': True,
-                'ignoreerrors': True,
+                # 'ignoreerrors': True, # ←★ これが原因の可能性が高いので削除。エラーを隠蔽させない。
                 'logtostderr': False,
-                'quiet': True,
-                'no_warnings': True,
-                'default_search': 'auto',
                 'source_address': '0.0.0.0', 
-                # User-Agentを偽装
+                # User-Agent偽装
                 'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
             }
 
             if cookie_path:
                 ydl_opts['cookiefile'] = cookie_path
+                st.write("ℹ️ Cookieを使用します。")
 
             if is_video:
-                # 動画モード
-                ydl_opts['format'] = 'bestvideo+bestaudio/best'
-                ydl_opts['merge_output_format'] = 'mp4'
+                st.write("ℹ️ 動画モードでダウンロードします。")
+                ydl_opts['format'] = 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best'
             else:
-                # 音声モード
+                st.write(f"ℹ️ 音声モード ({fmt_clean}) で変換します。")
                 ydl_opts['format'] = 'bestaudio/best'
                 ydl_opts['postprocessors'] = [{
                     'key': 'FFmpegExtractAudio',
@@ -112,33 +112,42 @@ if submitted and url_text:
                     'preferredquality': quality_select.split(' ')[0],
                 }]
                 
-                # WAV以外ならサムネイル埋め込み
                 if embed_thumb and fmt_clean != 'wav':
                     ydl_opts['writethumbnail'] = True
                     ydl_opts['postprocessors'].append({'key': 'EmbedThumbnail'})
-                    ydl_opts['postprocessors'].append({'key': 'FFmpegMetadata'})
+                    # メタデータ埋め込みはトラブルの元になることがあるので一旦外す
+                    # ydl_opts['postprocessors'].append({'key': 'FFmpegMetadata'}) 
+                    st.write("ℹ️ サムネイルを埋め込みます。")
 
             # ダウンロード実行
             try:
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    # 詳細な情報を取得
                     info = ydl.extract_info(url, download=True)
                     title = info.get('title', 'video')
-                    st.success(f"✔ 完了: {title}")
+                    st.success(f"✔ 処理完了: {title}")
                     
-                    # サムネイル表示（任意）
+                    # サムネイル表示
                     thumb = info.get('thumbnail')
                     if thumb:
-                        st.image(thumb, width=150)
+                        st.image(thumb, width=200)
+                    
+                    # デバッグ：フォルダの中身を確認
+                    files_in_dir = os.listdir(DOWNLOAD_DIR)
+                    st.write(f"📁 現在の保存フォルダの中身: `{files_in_dir}`")
                         
             except Exception as e:
-                st.error(f"✖ エラー: {e}")
+                st.error(f"✖ エラー発生: {e}")
+                st.error("考えられる原因: YouTube側の制限、またはFFmpegによる変換エラー。Cookieの利用を検討してください。")
 
             progress_bar.progress((i + 1) / len(urls))
 
     # ── ダウンロードボタンの表示 ──
-    files = os.listdir(DOWNLOAD_DIR)
+    files = [f for f in os.listdir(DOWNLOAD_DIR) if not f.endswith('.zip')]
+    
+    st.write("---")
     if files:
-        st.success("すべての処理が完了しました！")
+        st.success("✅ すべての処理が完了しました。以下のボタンからダウンロードしてください。")
         
         # ファイルが1つの場合
         if len(files) == 1:
@@ -155,10 +164,10 @@ if submitted and url_text:
             zip_path = zip_files(DOWNLOAD_DIR)
             with open(zip_path, "rb") as f:
                 st.download_button(
-                    label="⬇ まとめてダウンロード (ZIP)",
+                    label=f"⬇ まとめてダウンロード (ZIP) - {len(files)}ファイル",
                     data=f,
                     file_name="downloads.zip",
                     mime="application/zip"
                 )
     else:
-        st.warning("ダウンロードされたファイルが見つかりませんでした。")
+        st.warning("⚠️ ダウンロード可能なファイルが見つかりませんでした。処理ログのエラーを確認してください。")
