@@ -84,6 +84,16 @@ if submitted and url_text:
                 'outtmpl': f'{DOWNLOAD_DIR}/%(title)s.%(ext)s',
                 'quiet': True,
                 'no_warnings': True,
+                # エラー回避のための追加設定
+                'nocheckcertificate': True,
+                'ignoreerrors': True,
+                'logtostderr': False,
+                'quiet': True,
+                'no_warnings': True,
+                'default_search': 'auto',
+                'source_address': '0.0.0.0', 
+                # User-Agentを偽装
+                'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
             }
 
             if cookie_path:
