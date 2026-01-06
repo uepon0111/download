@@ -1,0 +1,37 @@
+name: YouTube Downloader Backend
+
+on:
+  workflow_dispatch:
+    inputs:
+      urls:
+        required: true
+        type: string
+      format:
+        required: true
+        default: 'mp3'
+        type: string
+      quality:
+        required: true
+        default: '0'
+        type: string
+
+jobs:
+  download:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+    - uses: actions/setup-python@v4
+      with: { python-version: '3.9' }
+    - run: sudo apt-get update && sudo apt-get install -y ffmpeg
+    - run: pip install -r requirements.txt
+    - name: Run Downloader
+      env:
+        INPUT_URLS: ${{ inputs.urls }}
+        INPUT_FORMAT: ${{ inputs.format }}
+        INPUT_QUALITY: ${{ inputs.quality }}
+      run: python downloader.py
+    - name: Upload Result
+      uses: actions/upload-artifact@v4
+      with:
+        name: Downloaded-Audio
+        path: downloads/
