@@ -317,11 +317,40 @@ if mode == "YouTubeダウンロード":
         for idx, info in enumerate(current_infos):
             with st.container():
                 st.markdown('<div class="edit-card">', unsafe_allow_html=True)
+                
+                # レイアウト用のカラムを作成（左：画像、中：編集、右：削除）
                 col_img, col_edit, col_del = st.columns([1.5, 3, 0.5])
                 
+                # ★ポイント: 「編集カラム（入力）」を先に処理して、セッションステートを更新する
+                with col_edit:
+                    new_filename = st.text_input("ファイル名 (拡張子なし)", value=info['custom_filename'], key=f"fname_{idx}")
+                    c_title, c_artist = st.columns(2)
+                    with c_title:
+                        new_title = st.text_input("タイトル", value=info['custom_title'], key=f"title_{idx}")
+                    with c_artist:
+                        new_artist = st.text_input("アーティスト", value=info['custom_artist'], key=f"artist_{idx}")
+                    new_album = st.text_input("アルバム名", value=info['custom_album'], key=f"album_{idx}")
+                    
+                    # 画像アップローダー
+                    uploaded_cover = st.file_uploader("カバー画像を変更 (jpg/png)", type=['jpg', 'jpeg', 'png'], key=f"cover_{idx}")
+                    
+                    # セッションステート更新
+                    st.session_state.video_infos[idx]['custom_filename'] = new_filename
+                    st.session_state.video_infos[idx]['custom_title'] = new_title
+                    st.session_state.video_infos[idx]['custom_artist'] = new_artist
+                    st.session_state.video_infos[idx]['custom_album'] = new_album
+                    
+                    # ★ここでアップロード有無を判定し、セッションステートを即時更新
+                    if uploaded_cover is not None:
+                        st.session_state.video_infos[idx]['custom_cover_bytes'] = uploaded_cover.getvalue()
+
+                # ★ポイント: 「画像カラム（表示）」を後に処理することで、更新された画像データを表示できる
                 with col_img:
-                    # 変更: カスタムカバー画像があればそれを優先表示
-                    display_thumb = info.get('custom_cover_bytes') if info.get('custom_cover_bytes') else info.get('thumbnail')
+                    # セッションステートから最新の値を取得（アップロード直後のデータも反映される）
+                    current_cover = st.session_state.video_infos[idx].get('custom_cover_bytes')
+                    default_thumb = info.get('thumbnail')
+                    
+                    display_thumb = current_cover if current_cover else default_thumb
                     
                     if display_thumb:
                         st.image(display_thumb, use_container_width=True)
@@ -332,30 +361,12 @@ if mode == "YouTubeダウンロード":
                     duration_s = info['duration'] % 60 if info['duration'] else 0
                     st.caption(f"長さ: {duration_m}:{duration_s:02d}")
 
-                with col_edit:
-                    new_filename = st.text_input("ファイル名 (拡張子なし)", value=info['custom_filename'], key=f"fname_{idx}")
-                    c_title, c_artist = st.columns(2)
-                    with c_title:
-                        new_title = st.text_input("タイトル", value=info['custom_title'], key=f"title_{idx}")
-                    with c_artist:
-                        new_artist = st.text_input("アーティスト", value=info['custom_artist'], key=f"artist_{idx}")
-                    new_album = st.text_input("アルバム名", value=info['custom_album'], key=f"album_{idx}")
-                    uploaded_cover = st.file_uploader("カバー画像を変更 (jpg/png)", type=['jpg', 'jpeg', 'png'], key=f"cover_{idx}")
-                    
-                    st.session_state.video_infos[idx]['custom_filename'] = new_filename
-                    st.session_state.video_infos[idx]['custom_title'] = new_title
-                    st.session_state.video_infos[idx]['custom_artist'] = new_artist
-                    st.session_state.video_infos[idx]['custom_album'] = new_album
-                    
-                    # 画像がアップロードされたらセッションステートを更新
-                    if uploaded_cover is not None:
-                        st.session_state.video_infos[idx]['custom_cover_bytes'] = uploaded_cover.getvalue()
-
                 with col_del:
                     st.markdown("<br>", unsafe_allow_html=True)
                     if st.button("削除", key=f"del_{idx}", help="リストから削除", type="secondary"):
                         remove_video(idx)
                         st.rerun()
+                        
                 st.markdown('</div>', unsafe_allow_html=True)
         
         st.markdown("---")
