@@ -320,17 +320,14 @@ if mode == "YouTubeダウンロード":
                 col_img, col_edit, col_del = st.columns([1.5, 3, 0.5])
                 
                 with col_img:
-                    # === 変更箇所: カスタム画像がある場合は優先して表示する ===
-                    display_thumb = info.get('custom_cover_bytes')
-                    if display_thumb is None:
-                        display_thumb = info.get('thumbnail')
+                    # 変更: カスタム画像があればそれを優先表示、なければ元のサムネイル
+                    display_thumb = info.get('custom_cover_bytes') if info.get('custom_cover_bytes') else info.get('thumbnail')
                     
                     if display_thumb:
                         st.image(display_thumb, use_container_width=True)
                     else:
                         st.markdown('<div style="height:100px; background:#333; display:flex; align-items:center; justify-content:center; color:#666;">No Image</div>', unsafe_allow_html=True)
-                    # ========================================================
-
+                    
                     duration_m = info['duration'] // 60 if info['duration'] else 0
                     duration_s = info['duration'] % 60 if info['duration'] else 0
                     st.caption(f"長さ: {duration_m}:{duration_s:02d}")
