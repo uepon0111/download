@@ -6,8 +6,6 @@ import time
 import zipfile
 import io
 import re
-import subprocess  # FFmpeg直接実行用に追記
-import shutil      # ファイル操作用に追記
 
 # --- ページ設定 ---
 # 絵文字アイコンを削除
@@ -153,21 +151,14 @@ def get_video_info(urls):
             for url in urls:
                 try:
                     info = ydl.extract_info(url, download=False)
-                    title = info.get('title', 'Unknown')
-                    uploader = info.get('uploader', 'Unknown')
                     info_list.append({
-                        'title': title,
-                        'uploader': uploader,
+                        'title': info.get('title', 'Unknown'),
+                        'uploader': info.get('uploader', 'Unknown'),
                         'thumbnail': info.get('thumbnail'),
                         'duration': info.get('duration'),
                         'url': url,
-                        # 以下編集用フィールド
-                        'custom_filename': sanitize_filename(title), 
-                        'custom_title': title,           # メタデータ用タイトル
-                        'custom_artist': uploader,       # メタデータ用アーティスト
-                        'custom_album': title,           # メタデータ用アルバム（初期値はタイトル）
-                        'thumb_mode': 'youtube',         # 'youtube' or 'upload'
-                        'custom_thumb_bytes': None       # アップロードされた画像のバイナリ
+                        'custom_filename': sanitize_filename(info.get('title', 'audio')), 
+                        'custom_artist': info.get('uploader', 'Unknown')
                     })
                 except Exception as e:
                     st.error(f"Error: {e}")
@@ -184,13 +175,8 @@ def process_download(info_list):
         cookie_path = create_cookie_file(tmp_dir)
         for idx, info in enumerate(info_list):
             url = info['url']
-            base_filename = f"video_{idx}" # 一時ファイル名（衝突回避のため固定）
             final_filename = sanitize_filename(info['custom_filename'])
-            
-            # メタデータ情報の取得
-            m_title = info['custom_title']
-            m_artist = info['custom_artist']
-            m_album = info['custom_album']
+            final_artist = info['custom_artist']
 
             main_status.markdown(f'<i class="fa-solid fa-list-check icon-spacing"></i> 処理中 ({idx+1}/{total_videos}): **{final_filename}**', unsafe_allow_html=True)
             
@@ -198,15 +184,11 @@ def process_download(info_list):
             single_bar = st.progress(0)
             hooks = ProgressHooks(single_status, single_bar)
 
-            # --- yt_dlp設定 ---
-            # ここでは自動埋め込み(EmbedThumbnail/FFmpegMetadata)を無効化し、後で手動でFFmpegを実行する
+            # MP3出力設定
             ydl_opts = {
-                'outtmpl': f'{tmp_dir}/{base_filename}.%(ext)s',
+                'outtmpl': f'{tmp_dir}/{final_filename}.%(ext)s',
                 'quiet': True,
                 'progress_hooks': [hooks.hook],
-                # サムネイルは後で使うのでダウンロードするが、埋め込みはOFF
-                'writethumbnail': True, 
-                'skip_download': False,
             }
             if cookie_path: ydl_opts['cookiefile'] = cookie_path
 
@@ -215,90 +197,31 @@ def process_download(info_list):
             if quality_val != '0':
                 postprocessors[0]['preferredquality'] = quality_val
             
+            if add_metadata:
+                postprocessors.append({
+                    'key': 'FFmpegMetadata',
+                    'add_metadata': True,
+                })
+            
+            # サムネイル埋め込み設定
+            if embed_thumb:
+                ydl_opts['writethumbnail'] = True
+                postprocessors.append({'key': 'EmbedThumbnail'})
+            
             ydl_opts.update({'format': 'bestaudio/best', 'postprocessors': postprocessors})
 
             try:
-                # 1. 音声とYoutubeサムネイルのダウンロード
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                     ydl.download([url])
-                
-                # ダウンロードされたファイルの特定
-                mp3_path = f"{tmp_dir}/{base_filename}.mp3"
-                if not os.path.exists(mp3_path):
-                    raise Exception("MP3 conversion failed")
-
-                # サムネイル画像の準備
-                cover_image_path = None
-                
-                # A: カスタム画像がアップロードされている場合
-                if info['thumb_mode'] == 'upload' and info['custom_thumb_bytes']:
-                    cover_image_path = f"{tmp_dir}/{base_filename}_custom_cover.jpg"
-                    with open(cover_image_path, "wb") as f:
-                        f.write(info['custom_thumb_bytes'])
-                
-                # B: YouTubeのサムネイルを使う場合
-                elif embed_thumb:
-                    # yt_dlpが保存した画像を探す (jpg, webp, pngなど)
-                    for f in os.listdir(tmp_dir):
-                        if f.startswith(base_filename) and f.lower().endswith(('.jpg', '.jpeg', '.webp', '.png')) and not f.endswith('.mp3'):
-                            cover_image_path = os.path.join(tmp_dir, f)
-                            break
-                
-                # 2. FFmpegを使ってメタデータと画像を埋め込み
-                # 一時的な出力ファイル
-                output_mp3_path = f"{tmp_dir}/{final_filename}.mp3"
-                
-                # FFmpegコマンド構築
-                ffmpeg_cmd = [
-                    'ffmpeg', '-y', 
-                    '-i', mp3_path,
-                ]
-
-                # カバー画像がある場合の入力追加
-                if cover_image_path and embed_thumb:
-                    ffmpeg_cmd.extend(['-i', cover_image_path])
-                    # マッピング: 音声(0:0)と画像(1:0)
-                    ffmpeg_cmd.extend(['-map', '0:0', '-map', '1:0'])
-                    # ID3タグ設定 (画像)
-                    ffmpeg_cmd.extend(['-c:v', 'copy', '-id3v2_version', '3', '-metadata:s:v', 'title="Album cover"', '-metadata:s:v', 'comment="Cover (front)"'])
-                else:
-                    ffmpeg_cmd.extend(['-map', '0:0'])
-                
-                # 音声コーデックはコピー
-                ffmpeg_cmd.extend(['-c:a', 'copy'])
-
-                # メタデータ付与
-                if add_metadata:
-                    ffmpeg_cmd.extend([
-                        '-metadata', f'title={m_title}',
-                        '-metadata', f'artist={m_artist}',
-                        '-metadata', f'album={m_album}'
-                    ])
-                
-                ffmpeg_cmd.append(output_mp3_path)
-                
-                # FFmpeg実行
-                subprocess.run(ffmpeg_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
-                
-                # 中間ファイルのクリーンアップ
-                if os.path.exists(mp3_path): os.remove(mp3_path)
-                if cover_image_path and os.path.exists(cover_image_path) and info['thumb_mode'] == 'upload': 
-                     # アップロードした一時画像のみ消す（DLした画像はディレクトリごと消えるので放置でOK）
-                     pass
-
                 single_status.markdown('<i class="fa-solid fa-circle-check" style="color:#00ff88"></i> 完了', unsafe_allow_html=True)
-
             except Exception as e:
                 single_status.error(f"エラー: {e}")
-                # エラー時も一応ログに出して継続
-                print(e)
                 continue
             
             main_progress.progress((idx + 1) / total_videos)
 
-        # ファイル回収 (最終的なMP3のみ)
-        # process_download内で名前を変えているので、意図したファイル名のみ取得
-        files = [f for f in os.listdir(tmp_dir) if f.endswith(".mp3") and not f.startswith("video_")]
+        # ファイル回収 (MP3のみ)
+        files = [f for f in os.listdir(tmp_dir) if f.endswith(".mp3")]
         for filename in files:
             with open(os.path.join(tmp_dir, filename), "rb") as f:
                 downloaded_data.append({"filename": filename, "data": f.read(), "mime": "audio/mpeg"})
@@ -359,62 +282,37 @@ if st.session_state.stage == 'preview':
         with st.container():
             st.markdown('<div class="edit-card">', unsafe_allow_html=True)
             
-            # レイアウト調整: 画像設定(左) / メタデータ設定(中) / 削除(右)
             col_img, col_edit, col_del = st.columns([1.5, 3, 0.5])
             
             with col_img:
-                st.caption("カバー画像")
-                thumb_mode = st.radio(
-                    "画像ソース", 
-                    ["YouTube", "アップロード"], 
-                    key=f"thumb_mode_{idx}",
-                    label_visibility="collapsed",
-                    horizontal=True
-                )
-                
-                # セッションステートへの反映
-                st.session_state.video_infos[idx]['thumb_mode'] = 'youtube' if thumb_mode == "YouTube" else 'upload'
-
-                if thumb_mode == "YouTube":
-                    if info['thumbnail']:
-                        st.image(info['thumbnail'], use_container_width=True)
-                    else:
-                        st.text("No Image")
+                if info['thumbnail']:
+                    st.image(info['thumbnail'], use_container_width=True)
                 else:
-                    uploaded_file = st.file_uploader("画像を選択", type=['jpg', 'png', 'webp'], key=f"uploader_{idx}")
-                    if uploaded_file:
-                        # 画像データをバイトとして保持
-                        st.session_state.video_infos[idx]['custom_thumb_bytes'] = uploaded_file.getvalue()
-                        st.image(uploaded_file, caption="アップロード画像", use_container_width=True)
-                    elif info.get('custom_thumb_bytes'):
-                        st.image(info['custom_thumb_bytes'], caption="アップロード済み", use_container_width=True)
+                    st.markdown('<div style="height:100px; background:#333; display:flex; align-items:center; justify-content:center; color:#666;">No Image</div>', unsafe_allow_html=True)
+                duration_m = info['duration'] // 60 if info['duration'] else 0
+                duration_s = info['duration'] % 60 if info['duration'] else 0
+                st.caption(f"長さ: {duration_m}:{duration_s:02d}")
 
             with col_edit:
-                # ファイル名
                 new_filename = st.text_input(
                     "ファイル名 (拡張子なし)", 
                     value=info['custom_filename'], 
-                    key=f"fname_{idx}"
+                    key=f"fname_{idx}",
+                    placeholder="ファイル名を入力"
                 )
                 
-                st.markdown("---")
+                new_artist = st.text_input(
+                    "アーティスト / チャンネル名", 
+                    value=info['custom_artist'], 
+                    key=f"artist_{idx}"
+                )
                 
-                # メタデータ入力カラム
-                mc1, mc2 = st.columns(2)
-                with mc1:
-                    new_title = st.text_input("タイトル (曲名)", value=info['custom_title'], key=f"title_{idx}")
-                    new_artist = st.text_input("アーティスト", value=info['custom_artist'], key=f"artist_{idx}")
-                with mc2:
-                    new_album = st.text_input("アルバム名", value=info['custom_album'], key=f"album_{idx}")
-                
-                # セッションステートの更新
                 st.session_state.video_infos[idx]['custom_filename'] = new_filename
-                st.session_state.video_infos[idx]['custom_title'] = new_title
                 st.session_state.video_infos[idx]['custom_artist'] = new_artist
-                st.session_state.video_infos[idx]['custom_album'] = new_album
 
             with col_del:
                 st.markdown("<br>", unsafe_allow_html=True)
+                # 絵文字ボタンをテキストに変更
                 if st.button("削除", key=f"del_{idx}", help="リストから削除", type="secondary"):
                     remove_video(idx)
                     st.rerun()
@@ -451,6 +349,7 @@ if st.session_state.stage == 'finished':
     st.markdown('### <i class="fa-solid fa-download icon-spacing"></i> 3. ダウンロード', unsafe_allow_html=True)
     
     if st.session_state.zip_data:
+        # 絵文字ラベルを変更
         st.download_button(
             label="ZIPでまとめて保存",
             data=st.session_state.zip_data,
@@ -466,6 +365,7 @@ if st.session_state.stage == 'finished':
         
         col_dl_1, col_dl_2 = st.columns([3, 1])
         with col_dl_1:
+            # 絵文字をFont Awesomeアイコンに変更
             st.markdown(f'<i class="fa-solid fa-file-audio icon-spacing"></i>**{item["filename"]}** ({size_mb:.1f} MB)', unsafe_allow_html=True)
         with col_dl_2:
             st.download_button(
