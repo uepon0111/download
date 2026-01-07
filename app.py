@@ -320,7 +320,7 @@ if mode == "YouTubeダウンロード":
                 col_img, col_edit, col_del = st.columns([1.5, 3, 0.5])
                 
                 with col_img:
-                    # 変更: カスタム画像があればそれを優先表示、なければ元のサムネイル
+                    # 変更: カスタムカバー画像があればそれを優先表示
                     display_thumb = info.get('custom_cover_bytes') if info.get('custom_cover_bytes') else info.get('thumbnail')
                     
                     if display_thumb:
@@ -346,6 +346,8 @@ if mode == "YouTubeダウンロード":
                     st.session_state.video_infos[idx]['custom_title'] = new_title
                     st.session_state.video_infos[idx]['custom_artist'] = new_artist
                     st.session_state.video_infos[idx]['custom_album'] = new_album
+                    
+                    # 画像がアップロードされたらセッションステートを更新
                     if uploaded_cover is not None:
                         st.session_state.video_infos[idx]['custom_cover_bytes'] = uploaded_cover.getvalue()
 
