@@ -213,7 +213,8 @@ def process_download(info_list):
     downloaded_data = []
     zip_buffer = None
     
-    st.markdown("### <i class="fa-solid fa-terminal"></i> 処理状況", unsafe_allow_html=True)
+    # 修正箇所: ダブルクォーテーション内でのHTML属性の干渉を避けるため、外側をシングルクォーテーションに変更
+    st.markdown('### <i class="fa-solid fa-terminal"></i> 処理状況', unsafe_allow_html=True)
     main_progress = st.progress(0)
     main_status = st.empty()
     total_videos = len(info_list)
@@ -402,7 +403,8 @@ if st.session_state.stage == 'processing':
 if st.session_state.stage == 'finished':
     custom_success("ダウンロードが完了しました！")
     
-    st.markdown("#### <i class="fa-solid fa-box-archive icon-box"></i> 一括ダウンロード", unsafe_allow_html=True)
+    # 修正箇所: 外側をシングルクォーテーションに変更
+    st.markdown('#### <i class="fa-solid fa-box-archive icon-box"></i> 一括ダウンロード', unsafe_allow_html=True)
     if st.session_state.zip_data:
         st.download_button(
             label="ZIPでまとめて保存",
@@ -414,7 +416,8 @@ if st.session_state.stage == 'finished':
             icon=":material/folder_zip:" # Streamlitの新しいIcon機能も併用
         )
 
-    st.markdown("#### <i class="fa-solid fa-music icon-box"></i> 個別ファイル", unsafe_allow_html=True)
+    # 修正箇所: 外側をシングルクォーテーションに変更
+    st.markdown('#### <i class="fa-solid fa-music icon-box"></i> 個別ファイル', unsafe_allow_html=True)
     for item in st.session_state.download_results:
         with st.container():
             st.markdown('<div class="video-card" style="padding: 15px; margin-bottom: 10px; display:flex; align-items:center; justify-content:space-between;">', unsafe_allow_html=True)
