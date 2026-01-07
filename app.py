@@ -6,10 +6,10 @@ import time
 import zipfile
 import io
 import re
-from PIL import Image
+from mutagen.mp3 import MP3
+from mutagen.id3 import ID3, TIT2, TPE1, TALB, APIC, error
 
 # --- ページ設定 ---
-# 絵文字アイコンを削除
 st.set_page_config(page_title="Audio Downloader Pro", layout="centered")
 
 # --- Font Awesome & カスタムCSSの注入 ---
@@ -71,11 +71,6 @@ st.markdown("""
             margin-right: 10px;
             color: #0072ff;
         }
-        
-        /* アップローダーの微調整 */
-        .stFileUploader label {
-            font-size: 0.8rem;
-        }
     </style>
 """, unsafe_allow_html=True)
 
@@ -103,6 +98,39 @@ def remove_video(index):
     if 0 <= index < len(st.session_state.video_infos):
         del st.session_state.video_infos[index]
 
+# ── 内部関数: メタデータ書き込み (mutagen) ──
+def apply_id3_tags(file_path, title, artist, album, cover_data=None):
+    try:
+        audio = MP3(file_path, ID3=ID3)
+        # タグが存在しない場合は追加
+        try:
+            audio.add_tags()
+        except error:
+            pass
+
+        # テキスト情報の書き込み
+        if title:
+            audio.tags.add(TIT2(encoding=3, text=title))
+        if artist:
+            audio.tags.add(TPE1(encoding=3, text=artist))
+        if album:
+            audio.tags.add(TALB(encoding=3, text=album))
+
+        # カバー画像の書き込み（指定がある場合）
+        if cover_data:
+            audio.tags.add(
+                APIC(
+                    encoding=3, # 3 is for utf-8
+                    mime='image/jpeg', # image/jpeg or image/png
+                    type=3, # 3 is for the cover image
+                    desc='Cover',
+                    data=cover_data
+                )
+            )
+        audio.save()
+    except Exception as e:
+        print(f"Metadata Error: {e}")
+
 # ── サイドバー設定 ──
 with st.sidebar:
     st.markdown('### <i class="fa-solid fa-sliders icon-spacing"></i> 詳細設定', unsafe_allow_html=True)
@@ -121,8 +149,11 @@ with st.sidebar:
     quality_val = audio_quality_map[quality_label]
     
     st.markdown('---')
-    embed_thumb = st.checkbox("サムネイル埋め込み", value=True)
-    add_metadata = st.checkbox("メタデータ付与", value=True)
+    # サムネイル埋め込み設定（デフォルト動作）
+    embed_thumb = st.checkbox("デフォルトサムネイル埋め込み", value=True, help="カスタム画像を指定しない場合、YouTubeのサムネイルを使用します")
+    
+    # メタデータ付与は常に行うように変更（カスタム対応のため）
+    add_metadata = True 
 
 # ── 進捗表示用のクラス ──
 class ProgressHooks:
@@ -157,21 +188,18 @@ def get_video_info(urls):
             for url in urls:
                 try:
                     info = ydl.extract_info(url, download=False)
-                    title = info.get('title', 'Unknown')
-                    uploader = info.get('uploader', 'Unknown')
-                    
                     info_list.append({
-                        'title': title,
-                        'uploader': uploader,
+                        'title': info.get('title', 'Unknown'),
+                        'uploader': info.get('uploader', 'Unknown'),
                         'thumbnail': info.get('thumbnail'),
                         'duration': info.get('duration'),
                         'url': url,
-                        # 編集用フィールドの初期化
-                        'custom_filename': sanitize_filename(title), 
-                        'custom_title': title,
-                        'custom_artist': uploader,
-                        'custom_album': '',
-                        'custom_cover_data': None  # アップロード画像のバイナリ
+                        # 編集用初期値
+                        'custom_filename': sanitize_filename(info.get('title', 'audio')), 
+                        'custom_title': info.get('title', 'Unknown'),
+                        'custom_artist': info.get('uploader', 'Unknown'),
+                        'custom_album': '', # アルバムは空で初期化
+                        'custom_cover_bytes': None # カスタム画像データ
                     })
                 except Exception as e:
                     st.error(f"Error: {e}")
@@ -190,11 +218,11 @@ def process_download(info_list):
             url = info['url']
             final_filename = sanitize_filename(info['custom_filename'])
             
-            # メタデータ情報の準備
-            meta_title = info['custom_title']
-            meta_artist = info['custom_artist']
-            meta_album = info['custom_album']
-            custom_cover_data = info.get('custom_cover_data')
+            # メタデータ取得
+            final_title = info.get('custom_title', '')
+            final_artist = info.get('custom_artist', '')
+            final_album = info.get('custom_album', '')
+            custom_cover = info.get('custom_cover_bytes')
 
             main_status.markdown(f'<i class="fa-solid fa-list-check icon-spacing"></i> 処理中 ({idx+1}/{total_videos}): **{final_filename}**', unsafe_allow_html=True)
             
@@ -202,42 +230,11 @@ def process_download(info_list):
             single_bar = st.progress(0)
             hooks = ProgressHooks(single_status, single_bar)
 
-            # --- カスタムサムネイルの上書きフック ---
-            # ダウンロード完了直後(変換前)に、ダウンロードされたサムネイルをアップロード画像で置換する
-            def replace_thumbnail_hook(d):
-                if d['status'] == 'finished' and custom_cover_data:
-                    # ダウンロードされたファイルのベース名 (拡張子なし)
-                    base_filename = os.path.splitext(d['filename'])[0]
-                    
-                    # フォルダ内の関連画像ファイル(webp, jpg等)を探して削除
-                    dir_path = os.path.dirname(d['filename'])
-                    file_stem = os.path.basename(base_filename)
-                    
-                    for f in os.listdir(dir_path):
-                        if f.startswith(file_stem) and f.lower().endswith(('.jpg', '.jpeg', '.webp', '.png')):
-                            try:
-                                os.remove(os.path.join(dir_path, f))
-                            except:
-                                pass
-
-                    # 新しい画像をjpgとして保存 (EmbedThumbnailはjpgを優先的に拾う)
-                    image_path = f"{base_filename}.jpg"
-                    with open(image_path, "wb") as f:
-                        f.write(custom_cover_data)
-
             # MP3出力設定
             ydl_opts = {
                 'outtmpl': f'{tmp_dir}/{final_filename}.%(ext)s',
                 'quiet': True,
-                'progress_hooks': [hooks.hook, replace_thumbnail_hook],
-                # メタデータの上書き設定 (ffmpeg引数を使用)
-                'postprocessor_args': {
-                    'ffmpeg': [
-                        '-metadata', f'title={meta_title}',
-                        '-metadata', f'artist={meta_artist}',
-                        '-metadata', f'album={meta_album}'
-                    ]
-                }
+                'progress_hooks': [hooks.hook],
             }
             if cookie_path: ydl_opts['cookiefile'] = cookie_path
 
@@ -246,22 +243,34 @@ def process_download(info_list):
             if quality_val != '0':
                 postprocessors[0]['preferredquality'] = quality_val
             
-            if add_metadata:
-                postprocessors.append({
-                    'key': 'FFmpegMetadata',
-                    'add_metadata': True,
-                })
+            # yt-dlpのメタデータ機能（基本情報用）
+            postprocessors.append({'key': 'FFmpegMetadata', 'add_metadata': True})
             
-            # サムネイル埋め込み設定
-            if embed_thumb:
+            # カスタム画像がなく、設定がONならYouTubeのサムネを埋め込む
+            if embed_thumb and not custom_cover:
                 ydl_opts['writethumbnail'] = True
                 postprocessors.append({'key': 'EmbedThumbnail'})
             
             ydl_opts.update({'format': 'bestaudio/best', 'postprocessors': postprocessors})
 
             try:
+                # 1. ダウンロード実行
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                     ydl.download([url])
+                
+                # 2. ファイル特定
+                mp3_path = os.path.join(tmp_dir, f"{final_filename}.mp3")
+                
+                # 3. カスタムメタデータの上書き (mutagen)
+                if os.path.exists(mp3_path):
+                    apply_id3_tags(
+                        mp3_path, 
+                        title=final_title, 
+                        artist=final_artist, 
+                        album=final_album, 
+                        cover_data=custom_cover
+                    )
+
                 single_status.markdown('<i class="fa-solid fa-circle-check" style="color:#00ff88"></i> 完了', unsafe_allow_html=True)
             except Exception as e:
                 single_status.error(f"エラー: {e}")
@@ -331,32 +340,20 @@ if st.session_state.stage == 'preview':
         with st.container():
             st.markdown('<div class="edit-card">', unsafe_allow_html=True)
             
+            # カラム比率調整
             col_img, col_edit, col_del = st.columns([1.5, 3, 0.5])
             
             with col_img:
-                # カスタム画像があればそれを表示、なければYouTubeサムネ
-                display_img = info['thumbnail']
-                if info.get('custom_cover_data'):
-                    display_img = info['custom_cover_data']
-                
-                if display_img:
-                    st.image(display_img, use_container_width=True)
+                if info['thumbnail']:
+                    st.image(info['thumbnail'], use_container_width=True)
                 else:
                     st.markdown('<div style="height:100px; background:#333; display:flex; align-items:center; justify-content:center; color:#666;">No Image</div>', unsafe_allow_html=True)
-                
-                # 画像アップローダー
-                uploaded_file = st.file_uploader("カバー画像変更", type=['png', 'jpg', 'jpeg'], key=f"up_{idx}", label_visibility="visible")
-                if uploaded_file is not None:
-                    # 画像データを読み込んでセッションステートに保存
-                    st.session_state.video_infos[idx]['custom_cover_data'] = uploaded_file.getvalue()
-                    st.rerun()
-
                 duration_m = info['duration'] // 60 if info['duration'] else 0
                 duration_s = info['duration'] % 60 if info['duration'] else 0
                 st.caption(f"長さ: {duration_m}:{duration_s:02d}")
 
             with col_edit:
-                # --- 編集フィールド ---
+                # ファイル名
                 new_filename = st.text_input(
                     "ファイル名 (拡張子なし)", 
                     value=info['custom_filename'], 
@@ -364,36 +361,29 @@ if st.session_state.stage == 'preview':
                     placeholder="ファイル名"
                 )
                 
-                new_title = st.text_input(
-                    "タイトル (曲名)", 
-                    value=info['custom_title'], 
-                    key=f"title_{idx}",
-                    placeholder="タイトル"
-                )
-
-                new_artist = st.text_input(
-                    "アーティスト", 
-                    value=info['custom_artist'], 
-                    key=f"artist_{idx}",
-                    placeholder="アーティスト"
-                )
-
-                new_album = st.text_input(
-                    "アルバム名", 
-                    value=info['custom_album'], 
-                    key=f"album_{idx}",
-                    placeholder="アルバム"
-                )
+                # タイトル、アルバム、アーティスト
+                c_title, c_artist = st.columns(2)
+                with c_title:
+                    new_title = st.text_input("タイトル", value=info['custom_title'], key=f"title_{idx}")
+                with c_artist:
+                    new_artist = st.text_input("アーティスト", value=info['custom_artist'], key=f"artist_{idx}")
                 
-                # 変更を即時反映
+                new_album = st.text_input("アルバム名", value=info['custom_album'], key=f"album_{idx}", placeholder="アルバム名を入力")
+                
+                # カバー画像アップロード
+                uploaded_cover = st.file_uploader("カバー画像を変更 (jpg/png)", type=['jpg', 'jpeg', 'png'], key=f"cover_{idx}")
+                
+                # 入力値をsession_stateに保存
                 st.session_state.video_infos[idx]['custom_filename'] = new_filename
                 st.session_state.video_infos[idx]['custom_title'] = new_title
                 st.session_state.video_infos[idx]['custom_artist'] = new_artist
                 st.session_state.video_infos[idx]['custom_album'] = new_album
+                
+                if uploaded_cover is not None:
+                    st.session_state.video_infos[idx]['custom_cover_bytes'] = uploaded_cover.getvalue()
 
             with col_del:
                 st.markdown("<br>", unsafe_allow_html=True)
-                # 絵文字ボタンをテキストに変更
                 if st.button("削除", key=f"del_{idx}", help="リストから削除", type="secondary"):
                     remove_video(idx)
                     st.rerun()
@@ -430,7 +420,6 @@ if st.session_state.stage == 'finished':
     st.markdown('### <i class="fa-solid fa-download icon-spacing"></i> 3. ダウンロード', unsafe_allow_html=True)
     
     if st.session_state.zip_data:
-        # 絵文字ラベルを変更
         st.download_button(
             label="ZIPでまとめて保存",
             data=st.session_state.zip_data,
@@ -446,7 +435,6 @@ if st.session_state.stage == 'finished':
         
         col_dl_1, col_dl_2 = st.columns([3, 1])
         with col_dl_1:
-            # 絵文字をFont Awesomeアイコンに変更
             st.markdown(f'<i class="fa-solid fa-file-audio icon-spacing"></i>**{item["filename"]}** ({size_mb:.1f} MB)', unsafe_allow_html=True)
         with col_dl_2:
             st.download_button(
