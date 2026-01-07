@@ -10,6 +10,7 @@ import subprocess  # FFmpeg直接実行用に追記
 import shutil      # ファイル操作用に追記
 
 # --- ページ設定 ---
+# 絵文字アイコンを削除
 st.set_page_config(page_title="Audio Downloader Pro", layout="centered")
 
 # --- Font Awesome & カスタムCSSの注入 ---
@@ -100,12 +101,8 @@ def remove_video(index):
 
 # ── サイドバー設定 ──
 with st.sidebar:
-    st.markdown('### <i class="fa-solid fa-sliders icon-spacing"></i> 設定', unsafe_allow_html=True)
+    st.markdown('### <i class="fa-solid fa-sliders icon-spacing"></i> 詳細設定', unsafe_allow_html=True)
     
-    # ★モード選択を追加
-    app_mode = st.radio("モード選択", ["YouTubeダウンロード", "ローカルMP3編集"])
-    st.markdown('---')
-
     # 形式はMP3固定
     format_type = 'mp3'
     
@@ -164,45 +161,16 @@ def get_video_info(urls):
                         'thumbnail': info.get('thumbnail'),
                         'duration': info.get('duration'),
                         'url': url,
-                        'is_local': False, # ローカル判定フラグ
                         # 以下編集用フィールド
                         'custom_filename': sanitize_filename(title), 
-                        'custom_title': title,            # メタデータ用タイトル
-                        'custom_artist': uploader,        # メタデータ用アーティスト
-                        'custom_album': title,            # メタデータ用アルバム（初期値はタイトル）
-                        'thumb_mode': 'youtube',          # 'youtube' or 'upload'
-                        'custom_thumb_bytes': None        # アップロードされた画像のバイナリ
+                        'custom_title': title,           # メタデータ用タイトル
+                        'custom_artist': uploader,       # メタデータ用アーティスト
+                        'custom_album': title,           # メタデータ用アルバム（初期値はタイトル）
+                        'thumb_mode': 'youtube',         # 'youtube' or 'upload'
+                        'custom_thumb_bytes': None       # アップロードされた画像のバイナリ
                     })
                 except Exception as e:
                     st.error(f"Error: {e}")
-    return info_list
-
-# ★ローカルファイルの情報を生成する関数
-def get_local_file_info(uploaded_files):
-    info_list = []
-    for f in uploaded_files:
-        # 拡張子を除いたファイル名を取得
-        base_name = os.path.splitext(f.name)[0]
-        # ファイルのバイナリデータを読み込む
-        file_bytes = f.getvalue()
-        
-        info_list.append({
-            'title': base_name,
-            'uploader': 'Unknown',
-            'thumbnail': None, # ローカルの場合デフォルト画像なし
-            'duration': None,
-            'url': None, # URLなし
-            'is_local': True,
-            'file_data': file_bytes, # バイナリデータ保持
-            
-            # 以下編集用フィールド
-            'custom_filename': sanitize_filename(base_name),
-            'custom_title': base_name,
-            'custom_artist': '',
-            'custom_album': '',
-            'thumb_mode': 'upload', # 初期値をアップロードモードに
-            'custom_thumb_bytes': None
-        })
     return info_list
 
 def process_download(info_list):
@@ -215,9 +183,9 @@ def process_download(info_list):
     with tempfile.TemporaryDirectory() as tmp_dir:
         cookie_path = create_cookie_file(tmp_dir)
         for idx, info in enumerate(info_list):
+            url = info['url']
             base_filename = f"video_{idx}" # 一時ファイル名（衝突回避のため固定）
             final_filename = sanitize_filename(info['custom_filename'])
-            mp3_path = f"{tmp_dir}/{base_filename}.mp3"
             
             # メタデータ情報の取得
             m_title = info['custom_title']
@@ -230,42 +198,34 @@ def process_download(info_list):
             single_bar = st.progress(0)
             hooks = ProgressHooks(single_status, single_bar)
 
+            # --- yt_dlp設定 ---
+            # ここでは自動埋め込み(EmbedThumbnail/FFmpegMetadata)を無効化し、後で手動でFFmpegを実行する
+            ydl_opts = {
+                'outtmpl': f'{tmp_dir}/{base_filename}.%(ext)s',
+                'quiet': True,
+                'progress_hooks': [hooks.hook],
+                # サムネイルは後で使うのでダウンロードするが、埋め込みはOFF
+                'writethumbnail': True, 
+                'skip_download': False,
+            }
+            if cookie_path: ydl_opts['cookiefile'] = cookie_path
+
+            # 音声変換設定
+            postprocessors = [{'key': 'FFmpegExtractAudio','preferredcodec': 'mp3'}]
+            if quality_val != '0':
+                postprocessors[0]['preferredquality'] = quality_val
+            
+            ydl_opts.update({'format': 'bestaudio/best', 'postprocessors': postprocessors})
+
             try:
-                # ★ローカルファイルかYouTubeかで処理を分岐
-                if info.get('is_local'):
-                    # ローカルファイル処理
-                    single_status.markdown('<i class="fa-solid fa-file-import"></i> ファイル読み込み中...', unsafe_allow_html=True)
-                    with open(mp3_path, "wb") as f:
-                        f.write(info['file_data'])
-                    single_bar.progress(1.0)
-                    time.sleep(0.5) # UI更新用ウェイト
-                else:
-                    # YouTubeダウンロード処理
-                    url = info['url']
-                    
-                    # --- yt_dlp設定 ---
-                    ydl_opts = {
-                        'outtmpl': f'{tmp_dir}/{base_filename}.%(ext)s',
-                        'quiet': True,
-                        'progress_hooks': [hooks.hook],
-                        'writethumbnail': True, 
-                        'skip_download': False,
-                    }
-                    if cookie_path: ydl_opts['cookiefile'] = cookie_path
-
-                    # 音声変換設定
-                    postprocessors = [{'key': 'FFmpegExtractAudio','preferredcodec': 'mp3'}]
-                    if quality_val != '0':
-                        postprocessors[0]['preferredquality'] = quality_val
-                    
-                    ydl_opts.update({'format': 'bestaudio/best', 'postprocessors': postprocessors})
-
-                    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                        ydl.download([url])
+                # 1. 音声とYoutubeサムネイルのダウンロード
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    ydl.download([url])
                 
-                # ファイル存在確認
+                # ダウンロードされたファイルの特定
+                mp3_path = f"{tmp_dir}/{base_filename}.mp3"
                 if not os.path.exists(mp3_path):
-                    raise Exception("MP3 conversion failed or file not found")
+                    raise Exception("MP3 conversion failed")
 
                 # サムネイル画像の準備
                 cover_image_path = None
@@ -277,7 +237,7 @@ def process_download(info_list):
                         f.write(info['custom_thumb_bytes'])
                 
                 # B: YouTubeのサムネイルを使う場合
-                elif embed_thumb and info.get('thumb_mode') == 'youtube':
+                elif embed_thumb:
                     # yt_dlpが保存した画像を探す (jpg, webp, pngなど)
                     for f in os.listdir(tmp_dir):
                         if f.startswith(base_filename) and f.lower().endswith(('.jpg', '.jpeg', '.webp', '.png')) and not f.endswith('.mp3'):
@@ -285,6 +245,7 @@ def process_download(info_list):
                             break
                 
                 # 2. FFmpegを使ってメタデータと画像を埋め込み
+                # 一時的な出力ファイル
                 output_mp3_path = f"{tmp_dir}/{final_filename}.mp3"
                 
                 # FFmpegコマンド構築
@@ -317,25 +278,26 @@ def process_download(info_list):
                 ffmpeg_cmd.append(output_mp3_path)
                 
                 # FFmpeg実行
-                single_status.markdown('<i class="fa-solid fa-tags"></i> メタデータ書込中...', unsafe_allow_html=True)
                 subprocess.run(ffmpeg_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
                 
                 # 中間ファイルのクリーンアップ
                 if os.path.exists(mp3_path): os.remove(mp3_path)
                 if cover_image_path and os.path.exists(cover_image_path) and info['thumb_mode'] == 'upload': 
-                     # アップロードした一時画像のみ消す
+                     # アップロードした一時画像のみ消す（DLした画像はディレクトリごと消えるので放置でOK）
                      pass
 
                 single_status.markdown('<i class="fa-solid fa-circle-check" style="color:#00ff88"></i> 完了', unsafe_allow_html=True)
 
             except Exception as e:
                 single_status.error(f"エラー: {e}")
+                # エラー時も一応ログに出して継続
                 print(e)
                 continue
             
             main_progress.progress((idx + 1) / total_videos)
 
-        # ファイル回収
+        # ファイル回収 (最終的なMP3のみ)
+        # process_download内で名前を変えているので、意図したファイル名のみ取得
         files = [f for f in os.listdir(tmp_dir) if f.endswith(".mp3") and not f.startswith("video_")]
         for filename in files:
             with open(os.path.join(tmp_dir, filename), "rb") as f:
@@ -359,53 +321,34 @@ if 'stage' not in st.session_state:
 if 'video_infos' not in st.session_state:
     st.session_state.video_infos = []
 
-# ステップ1: URL入力 または ファイル選択
+# ステップ1: URL入力
 if st.session_state.stage == 'input':
-    # ★モードによって表示を切り替え
-    if app_mode == "YouTubeダウンロード":
-        st.markdown('### <i class="fa-solid fa-link icon-spacing"></i> 1. URLを入力', unsafe_allow_html=True)
-        url_input = st.text_area(
-            label="URL入力",
-            placeholder="https://www.youtube.com/watch?v=...\nhttps://youtu.be/...",
-            height=150,
-            label_visibility="collapsed"
-        )
-        if st.button("情報を解析する", type="primary", use_container_width=True):
-            urls = [u.strip() for u in url_input.splitlines() if u.strip()]
-            if urls:
-                with st.spinner("情報を取得しています..."):
-                    infos = get_video_info(urls)
-                    if infos:
-                        st.session_state.video_infos = infos
-                        st.session_state.stage = 'preview'
-                        st.rerun()
-            else:
-                st.warning("URLを入力してください")
-    
-    else: # ローカルMP3編集モード
-        st.markdown('### <i class="fa-solid fa-file-audio icon-spacing"></i> 1. MP3ファイルを選択', unsafe_allow_html=True)
-        uploaded_files = st.file_uploader(
-            "MP3ファイルをアップロード", 
-            type=['mp3'], 
-            accept_multiple_files=True,
-            label_visibility="collapsed"
-        )
-        if st.button("編集へ進む", type="primary", use_container_width=True):
-            if uploaded_files:
-                with st.spinner("ファイルを読み込んでいます..."):
-                    infos = get_local_file_info(uploaded_files)
+    st.markdown('### <i class="fa-solid fa-link icon-spacing"></i> 1. URLを入力', unsafe_allow_html=True)
+    url_input = st.text_area(
+        label="URL入力",
+        placeholder="https://www.youtube.com/watch?v=...\nhttps://youtu.be/...",
+        height=150,
+        label_visibility="collapsed"
+    )
+
+    if st.button("情報を解析する", type="primary", use_container_width=True):
+        urls = [u.strip() for u in url_input.splitlines() if u.strip()]
+        if urls:
+            with st.spinner("情報を取得しています..."):
+                infos = get_video_info(urls)
+                if infos:
                     st.session_state.video_infos = infos
                     st.session_state.stage = 'preview'
                     st.rerun()
-            else:
-                st.warning("ファイルを選択してください")
+        else:
+            st.warning("URLを入力してください")
 
 # ステップ2: プレビュー & 編集
 if st.session_state.stage == 'preview':
     st.markdown(f'### <i class="fa-solid fa-pen-to-square icon-spacing"></i> 2. 編集と確認 ({len(st.session_state.video_infos)}件)', unsafe_allow_html=True)
     
     if len(st.session_state.video_infos) == 0:
-        st.info("リストが空です。入力をやり直してください。")
+        st.info("リストが空です。URLを入力し直してください。")
         if st.button("戻る"):
             st.session_state.stage = 'input'
             st.rerun()
@@ -421,18 +364,9 @@ if st.session_state.stage == 'preview':
             
             with col_img:
                 st.caption("カバー画像")
-                
-                # ★ローカルモードの場合は「YouTube」選択肢を隠すか、無効化する
-                options = ["YouTube", "アップロード"]
-                if info.get('is_local'):
-                    # ローカルならYouTube画像はないのでアップロードのみをデフォルトにするなどの処理
-                    # ここではシンプルにラジオボタンの選択肢を制御
-                    options = ["アップロード"]
-                
-                # UIのキーが一意になるように
                 thumb_mode = st.radio(
                     "画像ソース", 
-                    options, 
+                    ["YouTube", "アップロード"], 
                     key=f"thumb_mode_{idx}",
                     label_visibility="collapsed",
                     horizontal=True
@@ -441,7 +375,7 @@ if st.session_state.stage == 'preview':
                 # セッションステートへの反映
                 st.session_state.video_infos[idx]['thumb_mode'] = 'youtube' if thumb_mode == "YouTube" else 'upload'
 
-                if thumb_mode == "YouTube" and not info.get('is_local'):
+                if thumb_mode == "YouTube":
                     if info['thumbnail']:
                         st.image(info['thumbnail'], use_container_width=True)
                     else:
@@ -454,8 +388,6 @@ if st.session_state.stage == 'preview':
                         st.image(uploaded_file, caption="アップロード画像", use_container_width=True)
                     elif info.get('custom_thumb_bytes'):
                         st.image(info['custom_thumb_bytes'], caption="アップロード済み", use_container_width=True)
-                    else:
-                        st.markdown('<div style="background:#333; height:100px; display:flex; align-items:center; justify-content:center; color:#666;">No Image</div>', unsafe_allow_html=True)
 
             with col_edit:
                 # ファイル名
@@ -492,12 +424,11 @@ if st.session_state.stage == 'preview':
     st.markdown("---")
     c1, c2 = st.columns(2)
     with c1:
-        if st.button("入力画面に戻る", use_container_width=True):
+        if st.button("URL入力に戻る", use_container_width=True):
             st.session_state.stage = 'input'
             st.rerun()
     with c2:
-        btn_label = "編集・書き出し実行" if app_mode == "ローカルMP3編集" else "ダウンロード開始"
-        if st.button(btn_label, type="primary", use_container_width=True):
+        if st.button("ダウンロード開始", type="primary", use_container_width=True):
             st.session_state.stage = 'processing'
             st.rerun()
 
@@ -510,20 +441,20 @@ if st.session_state.stage == 'processing':
         st.session_state.stage = 'finished'
         st.rerun()
     else:
-        st.error("処理可能なファイルがありませんでした。")
+        st.error("ダウンロード可能なファイルがありませんでした。")
         if st.button("戻る"):
             st.session_state.stage = 'preview'
             st.rerun()
 
 # ステップ4: 完了画面
 if st.session_state.stage == 'finished':
-    st.markdown('### <i class="fa-solid fa-download icon-spacing"></i> 3. 保存', unsafe_allow_html=True)
+    st.markdown('### <i class="fa-solid fa-download icon-spacing"></i> 3. ダウンロード', unsafe_allow_html=True)
     
     if st.session_state.zip_data:
         st.download_button(
             label="ZIPでまとめて保存",
             data=st.session_state.zip_data,
-            file_name="edited_audio_files.zip",
+            file_name="audio_archive.zip",
             mime="application/zip",
             use_container_width=True,
             type="primary"
