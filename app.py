@@ -7,32 +7,24 @@ import io
 import re
 
 # --- ページ設定 ---
-st.set_page_config(
-    page_title="Audio Downloader Pro",
-    layout="centered",
-    initial_sidebar_state="expanded"
-)
+st.set_page_config(page_title="Audio Downloader Pro", layout="centered")
 
-# --- カスタムCSSの注入 (モダンデザイン・アイコン化) ---
+# --- Font Awesome & カスタムCSS (モダンデザイン定義) ---
 st.markdown("""
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
-        /* 全体のフォントと背景 */
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&display=swap');
+        /* 全体のフォント設定 */
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;800&display=swap');
         
-        /* Streamlitのデフォルトスタイルを上書き */
-        .stApp {
-            background-color: #0f1116;
+        html, body, [class*="css"] {
             font-family: 'Inter', sans-serif;
+            color: #e0e0e0;
         }
-        
-        /* ヘッダーの非表示（スッキリさせるため） */
-        header {visibility: hidden;}
 
-        /* グラデーションタイトル */
+        /* ヘッダーのグラデーションテキスト */
         .main-header {
             text-align: center;
-            padding: 40px 0 20px 0;
+            padding: 2rem 0 1rem 0;
         }
         .main-title {
             font-size: 3rem;
@@ -40,70 +32,98 @@ st.markdown("""
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
-            letter-spacing: -1px;
             margin: 0;
+            line-height: 1.2;
         }
-        .sub-title {
-            color: #a0aaec;
+        .sub-text {
+            color: #9ca3af;
             font-size: 1rem;
-            font-weight: 400;
-            margin-top: 10px;
+            margin-top: 0.5rem;
+            font-weight: 500;
         }
 
-        /* カードデザイン (グラスモーフィズム) */
-        .modern-card {
-            background: rgba(30, 32, 40, 0.7);
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            backdrop-filter: blur(10px);
+        /* カードデザイン (動画リスト用) */
+        .video-card {
+            background-color: #1f2937;
+            border: 1px solid #374151;
             border-radius: 16px;
-            padding: 24px;
+            padding: 20px;
             margin-bottom: 24px;
-            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.3);
-            transition: transform 0.2s ease;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
         }
-        
-        /* リストアイテムのデザイン */
-        .list-item-container {
-            background: #1a1c24;
-            border-radius: 12px;
-            border: 1px solid #2d3748;
-            padding: 16px;
-            margin-bottom: 16px;
+        .video-card:hover {
+            border-color: #764ba2;
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
         }
 
-        /* ボタンのスタイル調整（Streamlit標準ボタンをCSSで微調整は限界があるためコンテナで魅せる） */
-        .stButton > button {
+        /* カスタム通知ボックス */
+        .custom-alert {
+            padding: 1rem;
             border-radius: 8px;
-            font-weight: 600;
-            border: none;
-            transition: all 0.3s;
+            margin-bottom: 1rem;
+            display: flex;
+            align-items: center;
+            gap: 10px;
         }
-        .stButton > button:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+        .alert-info { background-color: #1e3a8a; border: 1px solid #1d4ed8; color: #dbeafe; }
+        .alert-success { background-color: #064e3b; border: 1px solid #059669; color: #d1fae5; }
+        .alert-error { background-color: #7f1d1d; border: 1px solid #dc2626; color: #fee2e2; }
+
+        /* ボタンのスタイル調整 */
+        button[kind="primary"] {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%) !important;
+            border: none !important;
+            font-weight: 600 !important;
+            transition: opacity 0.2s;
         }
-
-        /* アイコンの色設定 */
-        .icon-primary { color: #667eea; }
-        .icon-success { color: #00b894; }
-        .icon-danger { color: #ff7675; }
-        .icon-warning { color: #fdcb6e; }
-        .icon-spacing { margin-right: 8px; }
-
-        /* 画像の角丸 */
-        img { border-radius: 8px; }
+        button[kind="primary"]:hover {
+            opacity: 0.9;
+        }
         
-        /* プログレスバーの色変更 */
-        .stProgress > div > div > div > div {
-            background-image: linear-gradient(to right, #667eea, #764ba2);
+        /* 削除ボタン */
+        .delete-btn-wrapper button {
+            border-color: #ef4444 !important;
+            color: #ef4444 !important;
+        }
+        .delete-btn-wrapper button:hover {
+            background-color: #ef4444 !important;
+            color: white !important;
+        }
+
+        /* アイコンのスタイル */
+        .icon-box {
+            display: inline-flex;
+            justify-content: center;
+            align-items: center;
+            width: 24px;
         }
     </style>
 """, unsafe_allow_html=True)
 
-# ── 内部関数 ──
+# --- ユーティリティ関数: カスタム通知 ---
+def custom_info(msg):
+    st.markdown(f'<div class="custom-alert alert-info"><i class="fa-solid fa-circle-info"></i><span>{msg}</span></div>', unsafe_allow_html=True)
+
+def custom_success(msg):
+    st.markdown(f'<div class="custom-alert alert-success"><i class="fa-solid fa-circle-check"></i><span>{msg}</span></div>', unsafe_allow_html=True)
+
+def custom_error(msg):
+    st.markdown(f'<div class="custom-alert alert-error"><i class="fa-solid fa-triangle-exclamation"></i><span>{msg}</span></div>', unsafe_allow_html=True)
+
+# --- ヘッダー部分 ---
+st.markdown("""
+    <div class="main-header">
+        <div class="main-title"><i class="fa-solid fa-wave-square"></i> Audio Downloader Pro</div>
+        <div class="sub-text">URLから音声を抽出し、タグを編集してダウンロード</div>
+    </div>
+""", unsafe_allow_html=True)
+
+# ── 内部関数: ファイル名サニタイズ ──
 def sanitize_filename(name):
     return re.sub(r'[\\/*?:"<>|]', "", name)
 
+# ── 内部関数: Cookieの自動生成 ──
 def create_cookie_file(tmp_dir):
     if "general" in st.secrets and "YOUTUBE_COOKIES" in st.secrets["general"]:
         cookie_content = st.secrets["general"]["YOUTUBE_COOKIES"]
@@ -113,43 +133,37 @@ def create_cookie_file(tmp_dir):
         return cookie_path
     return None
 
+# ── 内部関数: 動画削除コールバック ──
 def remove_video(index):
     if 0 <= index < len(st.session_state.video_infos):
         del st.session_state.video_infos[index]
 
-# ── サイドバー（設定） ──
+# ── サイドバー設定 ──
 with st.sidebar:
-    st.markdown("### <i class='fa-solid fa-gear icon-spacing'></i> 設定", unsafe_allow_html=True)
+    st.markdown('### <i class="fa-solid fa-gear icon-box"></i> 設定', unsafe_allow_html=True)
     
-    st.markdown("<div style='font-size:0.9rem; color:#888; margin-bottom:10px;'>出力オプション</div>", unsafe_allow_html=True)
-    
-    # 音質設定
+    st.markdown('**<i class="fa-solid fa-sliders icon-box"></i> 音質設定**', unsafe_allow_html=True)
     audio_quality_map = {
         '最高 (Best)': '0', 
         '高音質 (192kbps)': '192', 
         '標準 (128kbps)': '128'
     }
-    quality_label = st.selectbox("ビットレート", list(audio_quality_map.keys()))
+    quality_label = st.selectbox("ビットレート", list(audio_quality_map.keys()), label_visibility="collapsed")
     quality_val = audio_quality_map[quality_label]
     
     st.markdown("---")
+    st.markdown('**<i class="fa-solid fa-tags icon-box"></i> メタデータ**', unsafe_allow_html=True)
+    embed_thumb = st.toggle("アートワーク埋め込み", value=True)
+    add_metadata = st.toggle("タグ情報の付与", value=True)
     
-    # チェックボックス
-    embed_thumb = st.checkbox("サムネイル埋め込み", value=True)
-    add_metadata = st.checkbox("メタデータ(ID3)付与", value=True)
-    
-    st.markdown("---")
-    st.markdown("<div style='text-align:center; color:#555; font-size:0.8rem;'>Audio Downloader v2.0</div>", unsafe_allow_html=True)
+    st.markdown("""
+        <div style="margin-top: 2rem; font-size: 0.8rem; color: #666;">
+            <i class="fa-regular fa-copyright"></i> Audio Downloader Pro<br>
+            v2.0 Modern Edition
+        </div>
+    """, unsafe_allow_html=True)
 
-# ── ヘッダー ──
-st.markdown("""
-    <div class="main-header">
-        <div class="main-title"><i class="fa-brands fa-youtube icon-spacing"></i>Audio Pro</div>
-        <div class="sub-title">YouTube to MP3 Converter & Metadata Editor</div>
-    </div>
-""", unsafe_allow_html=True)
-
-# ── 進捗フッククラス ──
+# ── 進捗表示用のクラス ──
 class ProgressHooks:
     def __init__(self, status_placeholder, progress_bar):
         self.status_placeholder = status_placeholder
@@ -165,13 +179,13 @@ class ProgressHooks:
             
             self.progress_bar.progress(min(per / 100, 1.0))
             speed = d.get('_speed_str', 'N/A')
-            self.status_placeholder.markdown(f'<span style="color:#a0aaec"><i class="fa-solid fa-spinner fa-spin icon-spacing"></i>ダウンロード中... {d["_percent_str"]} (速度: {speed})</span>', unsafe_allow_html=True)
+            self.status_placeholder.markdown(f'<span style="color:#667eea"><i class="fa-solid fa-circle-down fa-bounce"></i></span> ダウンロード中... {d["_percent_str"]} (速度: {speed})', unsafe_allow_html=True)
             
         elif d['status'] == 'finished':
             self.progress_bar.progress(1.0)
-            self.status_placeholder.markdown('<span style="color:#00b894"><i class="fa-solid fa-wand-magic-sparkles icon-spacing"></i>変換処理中...</span>', unsafe_allow_html=True)
+            self.status_placeholder.markdown('<span style="color:#764ba2"><i class="fa-solid fa-compact-disc fa-spin"></i></span> 変換処理中...', unsafe_allow_html=True)
 
-# ── ロジック: 動画情報取得 ──
+# ── 処理ロジック ──
 def get_video_info(urls):
     info_list = []
     with tempfile.TemporaryDirectory() as tmp_dir:
@@ -192,75 +206,60 @@ def get_video_info(urls):
                         'custom_artist': info.get('uploader', 'Unknown')
                     })
                 except Exception as e:
-                    st.error(f"Error: {e}")
+                    custom_error(f"Error processing URL: {url}<br><small>{e}</small>")
     return info_list
 
-# ── ロジック: ダウンロード処理 ──
 def process_download(info_list):
     downloaded_data = []
     zip_buffer = None
     
-    # 全体進捗用
-    st.markdown("### <i class='fa-solid fa-microchip icon-spacing'></i>処理ステータス", unsafe_allow_html=True)
+    st.markdown("### <i class="fa-solid fa-terminal"></i> 処理状況", unsafe_allow_html=True)
     main_progress = st.progress(0)
-    current_status_text = st.empty()
-    
+    main_status = st.empty()
     total_videos = len(info_list)
 
     with tempfile.TemporaryDirectory() as tmp_dir:
         cookie_path = create_cookie_file(tmp_dir)
-        
         for idx, info in enumerate(info_list):
             url = info['url']
             final_filename = sanitize_filename(info['custom_filename'])
             
-            # カード形式で進捗を表示
-            with st.container():
-                st.markdown(f"""
-                <div class="list-item-container" style="border-left: 4px solid #667eea;">
-                    <div style="font-weight:bold; margin-bottom:8px;">
-                        <i class="fa-solid fa-circle-play icon-spacing icon-primary"></i>{final_filename}
-                    </div>
-                </div>
-                """, unsafe_allow_html=True)
-                
-                col_stat, col_bar = st.columns([1, 2])
-                with col_stat:
-                    single_status = st.empty()
-                with col_bar:
-                    single_bar = st.progress(0)
-                
-                hooks = ProgressHooks(single_status, single_bar)
+            main_status.markdown(f'**[{idx+1}/{total_videos}]** {final_filename} を処理中...')
+            
+            single_status = st.empty()
+            single_bar = st.progress(0)
+            hooks = ProgressHooks(single_status, single_bar)
 
-                # yt-dlp設定
-                ydl_opts = {
-                    'outtmpl': f'{tmp_dir}/{final_filename}.%(ext)s',
-                    'quiet': True,
-                    'progress_hooks': [hooks.hook],
-                }
-                if cookie_path: ydl_opts['cookiefile'] = cookie_path
+            # MP3出力設定
+            ydl_opts = {
+                'outtmpl': f'{tmp_dir}/{final_filename}.%(ext)s',
+                'quiet': True,
+                'progress_hooks': [hooks.hook],
+            }
+            if cookie_path: ydl_opts['cookiefile'] = cookie_path
 
-                postprocessors = [{'key': 'FFmpegExtractAudio','preferredcodec': 'mp3'}]
-                if quality_val != '0':
-                    postprocessors[0]['preferredquality'] = quality_val
-                
-                if add_metadata:
-                    postprocessors.append({'key': 'FFmpegMetadata', 'add_metadata': True})
-                
-                if embed_thumb:
-                    ydl_opts['writethumbnail'] = True
-                    postprocessors.append({'key': 'EmbedThumbnail'})
-                
-                ydl_opts.update({'format': 'bestaudio/best', 'postprocessors': postprocessors})
+            # 音声変換設定
+            postprocessors = [{'key': 'FFmpegExtractAudio','preferredcodec': 'mp3'}]
+            if quality_val != '0':
+                postprocessors[0]['preferredquality'] = quality_val
+            
+            if add_metadata:
+                postprocessors.append({'key': 'FFmpegMetadata', 'add_metadata': True})
+            
+            # サムネイル埋め込み設定
+            if embed_thumb:
+                ydl_opts['writethumbnail'] = True
+                postprocessors.append({'key': 'EmbedThumbnail'})
+            
+            ydl_opts.update({'format': 'bestaudio/best', 'postprocessors': postprocessors})
 
-                try:
-                    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                        ydl.download([url])
-                    single_status.markdown('<span style="color:#00b894; font-weight:bold;"><i class="fa-solid fa-check icon-spacing"></i>完了</span>', unsafe_allow_html=True)
-                except Exception as e:
-                    single_status.markdown(f'<span style="color:#ff7675; font-weight:bold;"><i class="fa-solid fa-circle-exclamation icon-spacing"></i>失敗</span>', unsafe_allow_html=True)
-                    st.error(f"Details: {e}")
-                    continue
+            try:
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    ydl.download([url])
+                single_status.markdown('<span style="color:#059669"><i class="fa-solid fa-check"></i> 完了</span>', unsafe_allow_html=True)
+            except Exception as e:
+                single_status.markdown(f'<span style="color:#dc2626"><i class="fa-solid fa-xmark"></i> 失敗: {e}</span>', unsafe_allow_html=True)
+                continue
             
             main_progress.progress((idx + 1) / total_videos)
 
@@ -277,130 +276,116 @@ def process_download(info_list):
                 for filename in files:
                     zf.write(os.path.join(tmp_dir, filename), arcname=filename)
             zip_buffer = zip_io.getvalue()
-        
-    return downloaded_data, zip_buffer
+            
+        main_status.markdown('<span style="color:#667eea; font-weight:bold;"><i class="fa-solid fa-flag-checkered"></i> すべての処理が完了しました</span>', unsafe_allow_html=True)
+        return downloaded_data, zip_buffer
 
 
-# --- ステート管理 ---
+# --- メインUI ---
 if 'stage' not in st.session_state:
     st.session_state.stage = 'input'
 if 'video_infos' not in st.session_state:
     st.session_state.video_infos = []
 
-# ==========================================
-# STEP 1: URL入力画面
-# ==========================================
+# ステップ1: URL入力
 if st.session_state.stage == 'input':
-    st.markdown('<div class="modern-card">', unsafe_allow_html=True)
-    st.markdown('#### <i class="fa-solid fa-link icon-spacing icon-primary"></i> リンクを貼り付け', unsafe_allow_html=True)
-    st.markdown('<p style="font-size:0.9rem; color:#ccc;">YouTubeのURLを1行に1つずつ入力してください。</p>', unsafe_allow_html=True)
+    st.markdown('#### <i class="fa-solid fa-link icon-box"></i> YouTube URLを入力', unsafe_allow_html=True)
+    st.caption("複数のURLを入力する場合は改行してください。")
     
     url_input = st.text_area(
         label="URL",
         placeholder="https://www.youtube.com/watch?v=...\nhttps://youtu.be/...",
-        height=180,
+        height=150,
         label_visibility="collapsed"
     )
-    
-    col_act_1, col_act_2, col_act_3 = st.columns([1, 2, 1])
-    with col_act_2:
-        if st.button("情報を解析する", type="primary", use_container_width=True):
+
+    col1, col2 = st.columns([2, 1])
+    with col2:
+        if st.button("解析を開始", type="primary", use_container_width=True):
             urls = [u.strip() for u in url_input.splitlines() if u.strip()]
             if urls:
-                with st.spinner("メタデータを取得中..."):
+                with st.spinner("メタデータを取得しています..."):
                     infos = get_video_info(urls)
                     if infos:
                         st.session_state.video_infos = infos
                         st.session_state.stage = 'preview'
                         st.rerun()
             else:
-                st.warning("URLが入力されていません")
-    st.markdown('</div>', unsafe_allow_html=True)
+                custom_error("URLが入力されていません")
 
-# ==========================================
-# STEP 2: プレビュー & 編集画面
-# ==========================================
-elif st.session_state.stage == 'preview':
-    st.markdown(f"""
-    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;">
-        <h3 style="margin:0;"><i class="fa-solid fa-list icon-spacing"></i>ダウンロードリスト ({len(st.session_state.video_infos)})</h3>
-    </div>
-    """, unsafe_allow_html=True)
+# ステップ2: プレビュー & 編集
+if st.session_state.stage == 'preview':
+    st.markdown(f'#### <i class="fa-solid fa-pen-to-square icon-box"></i> 編集と確認 <small>({len(st.session_state.video_infos)}件)</small>', unsafe_allow_html=True)
     
     if len(st.session_state.video_infos) == 0:
-        st.info("リストが空です。")
+        custom_info("リストが空です。URLを入力し直してください。")
         if st.button("戻る"):
             st.session_state.stage = 'input'
             st.rerun()
     
     current_infos = st.session_state.video_infos.copy()
     
-    # 編集カードのループ
     for idx, info in enumerate(current_infos):
-        with st.container():
-            # カード開始
-            st.markdown('<div class="list-item-container">', unsafe_allow_html=True)
+        # カード形式のコンテナ
+        st.markdown('<div class="video-card">', unsafe_allow_html=True)
+        
+        c_thumb, c_detail, c_action = st.columns([1.5, 3, 0.5])
+        
+        with c_thumb:
+            if info['thumbnail']:
+                st.image(info['thumbnail'], use_container_width=True)
+            else:
+                st.markdown('<div style="height:80px; background:#111; border-radius:8px; display:flex; align-items:center; justify-content:center;"><i class="fa-solid fa-image" style="color:#333;"></i></div>', unsafe_allow_html=True)
             
-            c_thumb, c_info, c_action = st.columns([2, 4, 1])
+            duration_m = info['duration'] // 60 if info['duration'] else 0
+            duration_s = info['duration'] % 60 if info['duration'] else 0
+            st.caption(f'<i class="fa-regular fa-clock"></i> {duration_m}:{duration_s:02d}', unsafe_allow_html=True)
+
+        with c_detail:
+            new_filename = st.text_input(
+                "ファイル名", 
+                value=info['custom_filename'], 
+                key=f"fname_{idx}",
+                label_visibility="collapsed",
+                placeholder="ファイル名"
+            )
+            st.caption("ファイル名")
+
+            new_artist = st.text_input(
+                "アーティスト名", 
+                value=info['custom_artist'], 
+                key=f"artist_{idx}",
+                label_visibility="collapsed",
+                placeholder="アーティスト名"
+            )
+            st.caption("アーティスト / チャンネル名")
             
-            with c_thumb:
-                if info['thumbnail']:
-                    st.image(info['thumbnail'], use_container_width=True)
-                    duration_m = info['duration'] // 60 if info['duration'] else 0
-                    duration_s = info['duration'] % 60 if info['duration'] else 0
-                    st.caption(f'<i class="fa-regular fa-clock icon-spacing"></i>{duration_m}:{duration_s:02d}', unsafe_allow_html=True)
-                else:
-                    st.markdown('<div style="height:100px; background:#222; border-radius:8px;"></div>', unsafe_allow_html=True)
+            st.session_state.video_infos[idx]['custom_filename'] = new_filename
+            st.session_state.video_infos[idx]['custom_artist'] = new_artist
 
-            with c_info:
-                st.markdown(f"**元タイトル**: {info['title']}")
-                
-                new_filename = st.text_input(
-                    "ファイル名", 
-                    value=info['custom_filename'], 
-                    key=f"fname_{idx}",
-                    placeholder="ファイル名",
-                    label_visibility="collapsed"
-                )
-                st.caption("ファイル名 (拡張子不要)")
-
-                new_artist = st.text_input(
-                    "アーティスト", 
-                    value=info['custom_artist'], 
-                    key=f"artist_{idx}",
-                    placeholder="アーティスト名",
-                    label_visibility="collapsed"
-                )
-                st.caption("アーティスト / チャンネル名")
-                
-                st.session_state.video_infos[idx]['custom_filename'] = new_filename
-                st.session_state.video_infos[idx]['custom_artist'] = new_artist
-
-            with c_action:
-                st.markdown("<br>", unsafe_allow_html=True)
-                # 削除ボタン
-                if st.button("削除", key=f"del_{idx}", type="secondary"):
-                    remove_video(idx)
-                    st.rerun()
-
+        with c_action:
+            st.markdown('<div class="delete-btn-wrapper">', unsafe_allow_html=True)
+            if st.button("✕", key=f"del_{idx}", help="削除"):
+                remove_video(idx)
+                st.rerun()
             st.markdown('</div>', unsafe_allow_html=True)
+
+        st.markdown('</div>', unsafe_allow_html=True)
     
-    # アクションボタンエリア
+    # アクションバー
     st.markdown("---")
-    col_back, col_go = st.columns([1, 2])
-    with col_back:
+    c1, c2 = st.columns([1, 2])
+    with c1:
         if st.button("戻る", use_container_width=True):
             st.session_state.stage = 'input'
             st.rerun()
-    with col_go:
+    with c2:
         if st.button("ダウンロード開始", type="primary", use_container_width=True):
             st.session_state.stage = 'processing'
             st.rerun()
 
-# ==========================================
-# STEP 3: 処理実行画面
-# ==========================================
-elif st.session_state.stage == 'processing':
+# ステップ3: ダウンロード処理
+if st.session_state.stage == 'processing':
     results, zip_data = process_download(st.session_state.video_infos)
     if results:
         st.session_state.download_results = results
@@ -408,48 +393,40 @@ elif st.session_state.stage == 'processing':
         st.session_state.stage = 'finished'
         st.rerun()
     else:
-        st.error("ダウンロード可能なファイルが見つかりませんでした。")
+        custom_error("ダウンロード可能なファイルがありませんでした。")
         if st.button("戻る"):
             st.session_state.stage = 'preview'
             st.rerun()
 
-# ==========================================
-# STEP 4: 完了 & ダウンロード画面
-# ==========================================
-elif st.session_state.stage == 'finished':
-    st.markdown('<div class="modern-card" style="text-align:center;">', unsafe_allow_html=True)
-    st.markdown('<div style="font-size:4rem; color:#00b894; margin-bottom:10px;"><i class="fa-regular fa-circle-check"></i></div>', unsafe_allow_html=True)
-    st.markdown('<h3>All Tasks Completed!</h3>', unsafe_allow_html=True)
+# ステップ4: 完了画面
+if st.session_state.stage == 'finished':
+    custom_success("ダウンロードが完了しました！")
     
+    st.markdown("#### <i class="fa-solid fa-box-archive icon-box"></i> 一括ダウンロード", unsafe_allow_html=True)
     if st.session_state.zip_data:
-        st.markdown("<br>", unsafe_allow_html=True)
-        col_z1, col_z2, col_z3 = st.columns([1,2,1])
-        with col_z2:
-            st.download_button(
-                label="ZIPでまとめて保存",
-                data=st.session_state.zip_data,
-                file_name="audio_archive.zip",
-                mime="application/zip",
-                use_container_width=True,
-                type="primary"
-            )
-    st.markdown('</div>', unsafe_allow_html=True)
+        st.download_button(
+            label="ZIPでまとめて保存",
+            data=st.session_state.zip_data,
+            file_name="audio_archive.zip",
+            mime="application/zip",
+            use_container_width=True,
+            type="primary",
+            icon=":material/folder_zip:" # Streamlitの新しいIcon機能も併用
+        )
 
-    st.markdown('#### <i class="fa-solid fa-file-audio icon-spacing"></i> 個別ファイル', unsafe_allow_html=True)
-    
+    st.markdown("#### <i class="fa-solid fa-music icon-box"></i> 個別ファイル", unsafe_allow_html=True)
     for item in st.session_state.download_results:
-        size_mb = len(item['data']) / (1024 * 1024)
-        
         with st.container():
-            st.markdown('<div class="list-item-container" style="padding:12px;">', unsafe_allow_html=True)
-            c_icon, c_name, c_btn = st.columns([0.5, 3, 1])
+            st.markdown('<div class="video-card" style="padding: 15px; margin-bottom: 10px; display:flex; align-items:center; justify-content:space-between;">', unsafe_allow_html=True)
             
-            with c_icon:
-                st.markdown('<i class="fa-solid fa-music fa-lg icon-primary" style="margin-top:10px;"></i>', unsafe_allow_html=True)
-            with c_name:
-                st.markdown(f"**{item['filename']}**")
-                st.caption(f"{size_mb:.1f} MB")
-            with c_btn:
+            size_mb = len(item['data']) / (1024 * 1024)
+            col_name, col_btn = st.columns([3, 1.5])
+            
+            with col_name:
+                st.markdown(f'**{item["filename"]}**')
+                st.caption(f'{size_mb:.1f} MB')
+            
+            with col_btn:
                 st.download_button(
                     label="保存",
                     data=item['data'],
@@ -459,8 +436,8 @@ elif st.session_state.stage == 'finished':
                     use_container_width=True
                 )
             st.markdown('</div>', unsafe_allow_html=True)
-            
-    if st.button("新しいファイルを変換する"):
+        
+    if st.button("ホームに戻る"):
         st.session_state.stage = 'input'
         st.session_state.video_infos = []
         st.session_state.download_results = None
