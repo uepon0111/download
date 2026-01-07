@@ -485,13 +485,7 @@ elif mode == "MP3タグ編集 (ローカル)":
             st.markdown('<div class="edit-card">', unsafe_allow_html=True)
             col_img, col_info, col_del = st.columns([1.5, 3, 0.5])
             
-            with col_img:
-                display_img = item['new_cover_bytes'] if item['new_cover_bytes'] else item['cover_bytes']
-                if display_img:
-                    st.image(display_img, use_container_width=True)
-                else:
-                    st.markdown('<div style="height:100px; background:#333; display:flex; align-items:center; justify-content:center; color:#666;">No Cover</div>', unsafe_allow_html=True)
-            
+            # 【修正点】: 情報・編集カラム（col_info）を先に処理することで、アップロードされた画像の反映を確実にする
             with col_info:
                 new_fname = st.text_input("ファイル名", value=item['filename'], key=f"ed_fn_{idx}")
                 c1, c2 = st.columns(2)
@@ -511,6 +505,16 @@ elif mode == "MP3タグ編集 (ローカル)":
                 st.session_state.editor_files[idx]['artist'] = new_artist
                 st.session_state.editor_files[idx]['album'] = new_album
 
+            # 【修正点】: 画像表示カラム（col_img）を後に実行し、更新されたステートを参照する
+            with col_img:
+                # セッションステートから最新のデータを取得
+                current_item = st.session_state.editor_files[idx]
+                display_img = current_item['new_cover_bytes'] if current_item['new_cover_bytes'] else current_item['cover_bytes']
+                if display_img:
+                    st.image(display_img, use_container_width=True)
+                else:
+                    st.markdown('<div style="height:100px; background:#333; display:flex; align-items:center; justify-content:center; color:#666;">No Cover</div>', unsafe_allow_html=True)
+            
             with col_del:
                 st.markdown("<br>", unsafe_allow_html=True)
                 if st.button("削除", key=f"ed_del_{idx}", type="secondary"):
