@@ -2,208 +2,225 @@ import streamlit as st
 import yt_dlp
 import os
 import tempfile
+import time
 import zipfile
 import io
 import re
-import requests
-from mutagen.id3 import ID3, TIT2, TPE1, TALB, APIC, TYER
-from mutagen.mp3 import MP3
 
 # --- ページ設定 ---
-st.set_page_config(page_title="Audio Downloader Pro+", layout="centered")
+# 絵文字アイコンを削除
+st.set_page_config(page_title="Audio Downloader Pro", layout="centered")
 
-# --- CSS設定 ---
+# --- Font Awesome & カスタムCSSの注入 ---
 st.markdown("""
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
+        /* 全体のフォント設定 */
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap');
-        html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
+        html, body, [class*="css"] {
+            font-family: 'Inter', sans-serif;
+        }
+
+        /* メインタイトル */
         .main-title {
-            font-size: 2.5rem; font-weight: 800;
-            background: linear-gradient(45deg, #FF512F, #DD2476);
-            -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+            font-size: 2.5rem;
+            font-weight: 800;
+            background: linear-gradient(45deg, #0072ff, #00c6ff);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
             margin-bottom: 0.5rem;
         }
-        .sub-text { color: #888; font-size: 1rem; margin-bottom: 2rem; }
+
+        /* サブタイトル */
+        .sub-text {
+            color: #888;
+            font-size: 1rem;
+            margin-bottom: 2rem;
+        }
+
+        /* カードデザイン (コンテナ全体) */
         .edit-card {
-            background-color: #262730; border: 1px solid #444;
-            border-radius: 12px; padding: 20px; margin-bottom: 20px;
+            background-color: #1e1e1e;
+            border: 1px solid #333;
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 20px;
             box-shadow: 0 4px 6px rgba(0,0,0,0.1);
         }
-        .icon-spacing { margin-right: 10px; color: #DD2476; }
-        .stButton button[kind="secondary"] {
-            border-color: #ff4b4b !important; color: #ff4b4b !important;
+        
+        /* サムネイル画像 */
+        .thumb-img {
+            border-radius: 8px;
+            width: 100%;
+            object-fit: cover;
         }
-        .cover-preview { border-radius: 8px; max-width: 100%; margin-top: 10px; }
+
+        /* 削除ボタン（ゴミ箱）のスタイル調整 */
+        button[kind="secondary"] {
+            border-color: #ff4b4b !important;
+            color: #ff4b4b !important;
+        }
+        button[kind="secondary"]:hover {
+            background-color: #ff4b4b !important;
+            color: white !important;
+        }
+
+        /* アイコンのスタイル */
+        .icon-spacing {
+            margin-right: 10px;
+            color: #0072ff;
+        }
     </style>
 """, unsafe_allow_html=True)
 
-# --- ヘッダー ---
-st.markdown('<div class="main-title"><i class="fa-solid fa-music icon-spacing"></i>Audio Downloader Pro+</div>', unsafe_allow_html=True)
-st.markdown('<div class="sub-text">高機能メタデータ編集・カスタムサムネイル対応</div>', unsafe_allow_html=True)
+# --- ヘッダー部分 ---
+st.markdown('<div class="main-title"><i class="fa-solid fa-cloud-arrow-down icon-spacing"></i>Audio Downloader Pro</div>', unsafe_allow_html=True)
+st.markdown('<div class="sub-text">MP3一括ダウンロード・編集・メタデータ管理</div>', unsafe_allow_html=True)
 
-# ── 内部関数 ──
+# ── 内部関数: ファイル名サニタイズ ──
 def sanitize_filename(name):
+    """ファイル名に使えない文字を除去"""
     return re.sub(r'[\\/*?:"<>|]', "", name)
 
+# ── 内部関数: Cookieの自動生成 ──
+def create_cookie_file(tmp_dir):
+    if "general" in st.secrets and "YOUTUBE_COOKIES" in st.secrets["general"]:
+        cookie_content = st.secrets["general"]["YOUTUBE_COOKIES"]
+        cookie_path = os.path.join(tmp_dir, "cookies.txt")
+        with open(cookie_path, "w", encoding="utf-8") as f:
+            f.write(cookie_content)
+        return cookie_path
+    return None
+
+# ── 内部関数: 動画削除コールバック ──
 def remove_video(index):
     if 0 <= index < len(st.session_state.video_infos):
         del st.session_state.video_infos[index]
 
 # ── サイドバー設定 ──
 with st.sidebar:
-    st.markdown('### <i class="fa-solid fa-sliders icon-spacing"></i> 設定', unsafe_allow_html=True)
-    audio_quality_map = {'最高 (Best)': '0', '高音質 (192kbps)': '192', '標準 (128kbps)': '128'}
+    st.markdown('### <i class="fa-solid fa-sliders icon-spacing"></i> 詳細設定', unsafe_allow_html=True)
+    
+    # 形式はMP3固定
+    format_type = 'mp3'
+    
+    # 音声用設定のみ表示
+    st.markdown('**<i class="fa-solid fa-headphones icon-spacing"></i> 音質設定**', unsafe_allow_html=True)
+    audio_quality_map = {
+        '最高 (Best)': '0', 
+        '高音質 (192kbps)': '192', 
+        '標準 (128kbps)': '128'
+    }
     quality_label = st.selectbox("ビットレート", list(audio_quality_map.keys()))
     quality_val = audio_quality_map[quality_label]
+    
     st.markdown('---')
-    st.caption("※タイトルやアーティスト名などのメタデータはダウンロード後に適用されます。")
+    embed_thumb = st.checkbox("サムネイル埋め込み", value=True)
+    add_metadata = st.checkbox("メタデータ付与", value=True)
 
-# ── 進捗表示クラス ──
+# ── 進捗表示用のクラス ──
 class ProgressHooks:
     def __init__(self, status_placeholder, progress_bar):
         self.status_placeholder = status_placeholder
         self.progress_bar = progress_bar
+
     def hook(self, d):
         if d['status'] == 'downloading':
             p = d.get('_percent_str', '0%').replace('%','')
-            try: per = float(p)
-            except: per = 0
+            try:
+                per = float(p)
+            except:
+                per = 0
+            
             self.progress_bar.progress(min(per / 100, 1.0))
-            self.status_placeholder.markdown(f'ダウンロード中... {d["_percent_str"]}')
+            speed = d.get('_speed_str', 'N/A')
+            self.status_placeholder.markdown(f'<i class="fa-solid fa-spinner fa-spin"></i> ダウンロード中... {d["_percent_str"]} (速度: {speed})', unsafe_allow_html=True)
+            
         elif d['status'] == 'finished':
             self.progress_bar.progress(1.0)
-            self.status_placeholder.markdown('変換中...')
+            self.status_placeholder.markdown('<i class="fa-solid fa-arrows-rotate fa-spin"></i> 変換処理中...', unsafe_allow_html=True)
 
-# ── 情報取得ロジック ──
+# ── 処理ロジック ──
 def get_video_info(urls):
     info_list = []
-    ydl_opts = {'quiet': True, 'extract_flat': False, 'skip_download': True}
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        for url in urls:
-            try:
-                info = ydl.extract_info(url, download=False)
-                info_list.append({
-                    'url': url,
-                    'original_title': info.get('title', ''),
-                    'duration': info.get('duration'),
-                    'thumbnail_url': info.get('thumbnail'),
-                    # 編集用デフォルト値
-                    'custom_title': info.get('title', 'Audio'),
-                    'custom_artist': info.get('uploader', 'Unknown Artist'),
-                    'custom_album': 'YouTube Download',
-                    'cover_mode': 'YouTube', # YouTube or Custom
-                    'custom_cover_bytes': None # カスタム画像データ
-                })
-            except Exception as e:
-                st.error(f"Error fetching {url}: {e}")
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        cookie_path = create_cookie_file(tmp_dir)
+        ydl_opts = {'quiet': True, 'extract_flat': False, 'skip_download': True}
+        if cookie_path: ydl_opts['cookiefile'] = cookie_path
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            for url in urls:
+                try:
+                    info = ydl.extract_info(url, download=False)
+                    info_list.append({
+                        'title': info.get('title', 'Unknown'),
+                        'uploader': info.get('uploader', 'Unknown'),
+                        'thumbnail': info.get('thumbnail'),
+                        'duration': info.get('duration'),
+                        'url': url,
+                        'custom_filename': sanitize_filename(info.get('title', 'audio')), 
+                        'custom_artist': info.get('uploader', 'Unknown')
+                    })
+                except Exception as e:
+                    st.error(f"Error: {e}")
     return info_list
 
-# ── メタデータ適用関数 (Mutagen使用) ──
-def apply_metadata(file_path, info):
-    try:
-        audio = MP3(file_path, ID3=ID3)
-        try:
-            audio.add_tags()
-        except Exception:
-            pass # すでにタグがある場合
-
-        # テキストタグ設定
-        audio.tags.add(TIT2(encoding=3, text=info['custom_title']))
-        audio.tags.add(TPE1(encoding=3, text=info['custom_artist']))
-        audio.tags.add(TALB(encoding=3, text=info['custom_album']))
-        
-        # カバー画像設定
-        cover_data = None
-        mime_type = 'image/jpeg'
-
-        # 1. カスタム画像がアップロードされている場合
-        if info['cover_mode'] == 'Custom' and info['custom_cover_bytes']:
-            cover_data = info['custom_cover_bytes']
-            # マジックナンバー等で判定もできるが、簡易的にjpegとする(pngでも動作はする)
-            if cover_data.startswith(b'\x89PNG'):
-                mime_type = 'image/png'
-        
-        # 2. YouTubeのサムネイルを使う場合
-        elif info['cover_mode'] == 'YouTube' and info['thumbnail_url']:
-            try:
-                resp = requests.get(info['thumbnail_url'], timeout=10)
-                if resp.status_code == 200:
-                    cover_data = resp.content
-                    if info['thumbnail_url'].endswith('.webp'):
-                        mime_type = 'image/webp' # 一部のプレイヤーはwebp非対応の可能性あり
-            except Exception:
-                pass
-
-        if cover_data:
-            audio.tags.add(APIC(
-                encoding=3,
-                mime=mime_type,
-                type=3, # 3 is for the cover image
-                desc=u'Cover',
-                data=cover_data
-            ))
-        
-        audio.save()
-        return True
-    except Exception as e:
-        print(f"Metadata Error: {e}")
-        return False
-
-# ── ダウンロード処理 ──
 def process_download(info_list):
     downloaded_data = []
     zip_buffer = None
     main_progress = st.progress(0)
     main_status = st.empty()
-    total = len(info_list)
+    total_videos = len(info_list)
 
     with tempfile.TemporaryDirectory() as tmp_dir:
+        cookie_path = create_cookie_file(tmp_dir)
         for idx, info in enumerate(info_list):
-            filename_base = sanitize_filename(info['custom_title'])
-            main_status.info(f"処理中 ({idx+1}/{total}): {filename_base}")
-            
-            s_stat = st.empty()
-            s_bar = st.progress(0)
-            hooks = ProgressHooks(s_stat, s_bar)
+            url = info['url']
+            final_filename = sanitize_filename(info['custom_filename'])
+            final_artist = info['custom_artist']
 
-            # yt-dlp設定 (サムネイルは埋め込まず、後でMutagenで制御する)
+            main_status.markdown(f'<i class="fa-solid fa-list-check icon-spacing"></i> 処理中 ({idx+1}/{total_videos}): **{final_filename}**', unsafe_allow_html=True)
+            
+            single_status = st.empty()
+            single_bar = st.progress(0)
+            hooks = ProgressHooks(single_status, single_bar)
+
+            # MP3出力設定
             ydl_opts = {
-                'outtmpl': f'{tmp_dir}/{filename_base}.%(ext)s',
+                'outtmpl': f'{tmp_dir}/{final_filename}.%(ext)s',
                 'quiet': True,
                 'progress_hooks': [hooks.hook],
-                'format': 'bestaudio/best',
-                'writethumbnail': False, # 自前で処理するためFalse
-                'postprocessors': [{
-                    'key': 'FFmpegExtractAudio',
-                    'preferredcodec': 'mp3',
-                    'preferredquality': quality_val,
-                }],
             }
+            if cookie_path: ydl_opts['cookiefile'] = cookie_path
+
+            # 音声変換設定
+            postprocessors = [{'key': 'FFmpegExtractAudio','preferredcodec': 'mp3'}]
+            if quality_val != '0':
+                postprocessors[0]['preferredquality'] = quality_val
+            
+            if add_metadata:
+                postprocessors.append({
+                    'key': 'FFmpegMetadata',
+                    'add_metadata': True,
+                })
+            
+            # サムネイル埋め込み設定
+            if embed_thumb:
+                ydl_opts['writethumbnail'] = True
+                postprocessors.append({'key': 'EmbedThumbnail'})
+            
+            ydl_opts.update({'format': 'bestaudio/best', 'postprocessors': postprocessors})
 
             try:
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                    ydl.download([info['url']])
-                
-                # ダウンロードされたファイルのパスを特定
-                mp3_path = os.path.join(tmp_dir, f"{filename_base}.mp3")
-                
-                # メタデータとカバー画像の適用
-                if os.path.exists(mp3_path):
-                    s_stat.markdown("🏷️ タグ情報を書き込み中...")
-                    apply_metadata(mp3_path, info)
-                    s_stat.success("完了")
-                else:
-                    s_stat.error("ファイルが見つかりません")
-                    continue
-
+                    ydl.download([url])
+                single_status.markdown('<i class="fa-solid fa-circle-check" style="color:#00ff88"></i> 完了', unsafe_allow_html=True)
             except Exception as e:
-                s_stat.error(f"エラー: {e}")
+                single_status.error(f"エラー: {e}")
                 continue
             
-            main_progress.progress((idx + 1) / total)
+            main_progress.progress((idx + 1) / total_videos)
 
-        # ファイル回収
+        # ファイル回収 (MP3のみ)
         files = [f for f in os.listdir(tmp_dir) if f.endswith(".mp3")]
         for filename in files:
             with open(os.path.join(tmp_dir, filename), "rb") as f:
@@ -217,107 +234,152 @@ def process_download(info_list):
                     zf.write(os.path.join(tmp_dir, filename), arcname=filename)
             zip_buffer = zip_io.getvalue()
             
+        main_status.markdown('<i class="fa-solid fa-face-smile icon-spacing"></i> すべての処理が完了しました！', unsafe_allow_html=True)
         return downloaded_data, zip_buffer
 
-# --- メインロジック ---
-if 'stage' not in st.session_state: st.session_state.stage = 'input'
-if 'video_infos' not in st.session_state: st.session_state.video_infos = []
 
-# 1. 入力画面
+# --- メインUI ---
+if 'stage' not in st.session_state:
+    st.session_state.stage = 'input'
+if 'video_infos' not in st.session_state:
+    st.session_state.video_infos = []
+
+# ステップ1: URL入力
 if st.session_state.stage == 'input':
-    st.markdown('### 1. URL入力')
-    url_input = st.text_area("URL", height=150, placeholder="https://www.youtube.com/watch?v=...")
-    if st.button("解析開始", type="primary", use_container_width=True):
+    st.markdown('### <i class="fa-solid fa-link icon-spacing"></i> 1. URLを入力', unsafe_allow_html=True)
+    url_input = st.text_area(
+        label="URL入力",
+        placeholder="https://www.youtube.com/watch?v=...\nhttps://youtu.be/...",
+        height=150,
+        label_visibility="collapsed"
+    )
+
+    if st.button("情報を解析する", type="primary", use_container_width=True):
         urls = [u.strip() for u in url_input.splitlines() if u.strip()]
         if urls:
-            with st.spinner("情報を取得中..."):
+            with st.spinner("情報を取得しています..."):
                 infos = get_video_info(urls)
                 if infos:
                     st.session_state.video_infos = infos
                     st.session_state.stage = 'preview'
                     st.rerun()
+        else:
+            st.warning("URLを入力してください")
 
-# 2. 編集画面
+# ステップ2: プレビュー & 編集
 if st.session_state.stage == 'preview':
-    st.markdown(f'### 2. メタデータ編集 ({len(st.session_state.video_infos)}件)')
+    st.markdown(f'### <i class="fa-solid fa-pen-to-square icon-spacing"></i> 2. 編集と確認 ({len(st.session_state.video_infos)}件)', unsafe_allow_html=True)
     
-    for idx, info in enumerate(st.session_state.video_infos):
+    if len(st.session_state.video_infos) == 0:
+        st.info("リストが空です。URLを入力し直してください。")
+        if st.button("戻る"):
+            st.session_state.stage = 'input'
+            st.rerun()
+    
+    current_infos = st.session_state.video_infos.copy()
+    
+    for idx, info in enumerate(current_infos):
         with st.container():
             st.markdown('<div class="edit-card">', unsafe_allow_html=True)
-            c1, c2 = st.columns([1.5, 3])
             
-            # --- 左カラム：画像設定 ---
-            with c1:
-                st.caption("カバー画像設定")
-                img_mode = st.radio("画像ソース", ["YouTube", "Custom"], key=f"mode_{idx}", horizontal=True, label_visibility="collapsed")
-                st.session_state.video_infos[idx]['cover_mode'] = img_mode
-
-                if img_mode == "YouTube":
-                    if info['thumbnail_url']:
-                        st.image(info['thumbnail_url'], use_container_width=True)
-                    else:
-                        st.markdown("No Image")
+            col_img, col_edit, col_del = st.columns([1.5, 3, 0.5])
+            
+            with col_img:
+                if info['thumbnail']:
+                    st.image(info['thumbnail'], use_container_width=True)
                 else:
-                    uploaded_file = st.file_uploader("画像をアップロード", type=['jpg', 'png'], key=f"up_{idx}")
-                    if uploaded_file:
-                        # バイナリデータを保存
-                        st.session_state.video_infos[idx]['custom_cover_bytes'] = uploaded_file.getvalue()
-                        st.image(uploaded_file, caption="設定する画像", use_container_width=True)
-                    elif st.session_state.video_infos[idx]['custom_cover_bytes']:
-                        # すでにアップロード済みのデータを表示
-                        st.image(st.session_state.video_infos[idx]['custom_cover_bytes'], caption="設定済み画像", use_container_width=True)
-            
-            # --- 右カラム：テキスト情報設定 ---
-            with c2:
-                # 削除ボタンを右上に
-                col_title, col_del = st.columns([4, 1])
-                with col_title:
-                    st.caption("基本情報")
-                with col_del:
-                    if st.button("🗑", key=f"del_{idx}", help="リストから削除", type="secondary"):
-                        remove_video(idx)
-                        st.rerun()
+                    st.markdown('<div style="height:100px; background:#333; display:flex; align-items:center; justify-content:center; color:#666;">No Image</div>', unsafe_allow_html=True)
+                duration_m = info['duration'] // 60 if info['duration'] else 0
+                duration_s = info['duration'] % 60 if info['duration'] else 0
+                st.caption(f"長さ: {duration_m}:{duration_s:02d}")
 
-                new_title = st.text_input("タイトル", value=info['custom_title'], key=f"title_{idx}")
-                new_artist = st.text_input("アーティスト", value=info['custom_artist'], key=f"artist_{idx}")
-                new_album = st.text_input("アルバム名", value=info['custom_album'], key=f"album_{idx}")
+            with col_edit:
+                new_filename = st.text_input(
+                    "ファイル名 (拡張子なし)", 
+                    value=info['custom_filename'], 
+                    key=f"fname_{idx}",
+                    placeholder="ファイル名を入力"
+                )
                 
-                # 状態更新
-                st.session_state.video_infos[idx]['custom_title'] = new_title
+                new_artist = st.text_input(
+                    "アーティスト / チャンネル名", 
+                    value=info['custom_artist'], 
+                    key=f"artist_{idx}"
+                )
+                
+                st.session_state.video_infos[idx]['custom_filename'] = new_filename
                 st.session_state.video_infos[idx]['custom_artist'] = new_artist
-                st.session_state.video_infos[idx]['custom_album'] = new_album
+
+            with col_del:
+                st.markdown("<br>", unsafe_allow_html=True)
+                # 絵文字ボタンをテキストに変更
+                if st.button("削除", key=f"del_{idx}", help="リストから削除", type="secondary"):
+                    remove_video(idx)
+                    st.rerun()
 
             st.markdown('</div>', unsafe_allow_html=True)
-
-    c1, c2 = st.columns(2)
-    if c1.button("戻る", use_container_width=True):
-        st.session_state.stage = 'input'
-        st.rerun()
-    if c2.button("ダウンロード開始", type="primary", use_container_width=True):
-        st.session_state.stage = 'processing'
-        st.rerun()
-
-# 3. 処理 & 完了画面
-if st.session_state.stage == 'processing':
-    res, zip_d = process_download(st.session_state.video_infos)
-    st.session_state.results = res
-    st.session_state.zip_data = zip_d
-    st.session_state.stage = 'finished'
-    st.rerun()
-
-if st.session_state.stage == 'finished':
-    st.markdown('### 3. ダウンロード完了')
-    
-    if st.session_state.zip_data:
-        st.download_button("ZIPで一括保存", st.session_state.zip_data, "music_files.zip", "application/zip", type="primary", use_container_width=True)
     
     st.markdown("---")
-    for item in st.session_state.results:
-        c1, c2 = st.columns([3, 1])
-        c1.markdown(f"🎵 **{item['filename']}**")
-        c2.download_button("保存", item['data'], item['filename'], item['mime'], key=f"dl_{item['filename']}")
+    c1, c2 = st.columns(2)
+    with c1:
+        if st.button("URL入力に戻る", use_container_width=True):
+            st.session_state.stage = 'input'
+            st.rerun()
+    with c2:
+        if st.button("ダウンロード開始", type="primary", use_container_width=True):
+            st.session_state.stage = 'processing'
+            st.rerun()
+
+# ステップ3: ダウンロード処理
+if st.session_state.stage == 'processing':
+    results, zip_data = process_download(st.session_state.video_infos)
+    if results:
+        st.session_state.download_results = results
+        st.session_state.zip_data = zip_data
+        st.session_state.stage = 'finished'
+        st.rerun()
+    else:
+        st.error("ダウンロード可能なファイルがありませんでした。")
+        if st.button("戻る"):
+            st.session_state.stage = 'preview'
+            st.rerun()
+
+# ステップ4: 完了画面
+if st.session_state.stage == 'finished':
+    st.markdown('### <i class="fa-solid fa-download icon-spacing"></i> 3. ダウンロード', unsafe_allow_html=True)
     
+    if st.session_state.zip_data:
+        # 絵文字ラベルを変更
+        st.download_button(
+            label="ZIPでまとめて保存",
+            data=st.session_state.zip_data,
+            file_name="audio_archive.zip",
+            mime="application/zip",
+            use_container_width=True,
+            type="primary"
+        )
+
+    st.markdown("#### 個別ファイル")
+    for item in st.session_state.download_results:
+        size_mb = len(item['data']) / (1024 * 1024)
+        
+        col_dl_1, col_dl_2 = st.columns([3, 1])
+        with col_dl_1:
+            # 絵文字をFont Awesomeアイコンに変更
+            st.markdown(f'<i class="fa-solid fa-file-audio icon-spacing"></i>**{item["filename"]}** ({size_mb:.1f} MB)', unsafe_allow_html=True)
+        with col_dl_2:
+            st.download_button(
+                label="保存",
+                data=item['data'],
+                file_name=item['filename'],
+                mime=item['mime'],
+                key=f"dl_{item['filename']}",
+                use_container_width=True
+            )
+        st.markdown("<hr style='margin: 5px 0; opacity: 0.2;'>", unsafe_allow_html=True)
+        
     if st.button("最初に戻る"):
         st.session_state.stage = 'input'
         st.session_state.video_infos = []
+        st.session_state.download_results = None
         st.rerun()
