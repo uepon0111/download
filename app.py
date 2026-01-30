@@ -140,11 +140,9 @@ if mode == "YouTubeダウンロード":
 
     # ── 内部関数: Cookieの自動生成 ──
     def create_cookie_file(tmp_dir):
-        # secrets.toml または Streamlit Secrets からCookieを取得
-        # 構造: [general] YOUTUBE_COOKIES = "..."
         if "general" in st.secrets and "YOUTUBE_COOKIES" in st.secrets["general"]:
             cookie_content = st.secrets["general"]["YOUTUBE_COOKIES"]
-            if cookie_content and cookie_content.strip(): 
+            if cookie_content.strip(): # 空でない場合のみ作成
                 cookie_path = os.path.join(tmp_dir, "cookies.txt")
                 with open(cookie_path, "w", encoding="utf-8") as f:
                     f.write(cookie_content)
@@ -184,27 +182,22 @@ if mode == "YouTubeダウンロード":
         with tempfile.TemporaryDirectory() as tmp_dir:
             cookie_path = create_cookie_file(tmp_dir)
             
-            # 【403対策】User-Agent偽装とオプション調整
+            # 【修正点】オプションを強化してエラーを回避
             ydl_opts = {
                 'quiet': True,
                 'extract_flat': False,
                 'skip_download': True,
-                'format': 'best',
-                'noplaylist': True,
-                'check_formats': False,
-                'ignoreerrors': True,
-                'cachedir': False, # キャッシュ無効化
-                'http_headers': {
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
-                    'Accept-Language': 'en-US,en;q=0.9',
-                }
+                'format': 'best',        # 形式を指定して検索を安定化
+                'noplaylist': True,      # プレイリストURLでも単体動画として処理
+                'check_formats': False,  # メタデータ取得時は厳密なフォーマットチェックをスキップ
+                'ignoreerrors': True,    # エラーでも停止しない
             }
-            if cookie_path: 
-                ydl_opts['cookiefile'] = cookie_path
+            if cookie_path: ydl_opts['cookiefile'] = cookie_path
             
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 for url in urls:
                     try:
+                        # download=Falseで情報のみ取得
                         info = ydl.extract_info(url, download=False)
                         
                         if not info:
@@ -236,7 +229,6 @@ if mode == "YouTubeダウンロード":
 
         with tempfile.TemporaryDirectory() as tmp_dir:
             cookie_path = create_cookie_file(tmp_dir)
-            
             for idx, info in enumerate(info_list):
                 url = info['url']
                 final_filename = sanitize_filename(info['custom_filename'])
@@ -251,21 +243,14 @@ if mode == "YouTubeダウンロード":
                 single_bar = st.progress(0)
                 hooks = ProgressHooks(single_status, single_bar)
 
-                # 【403対策】User-Agent偽装とオプション調整
                 ydl_opts = {
                     'outtmpl': f'{tmp_dir}/{final_filename}.%(ext)s',
                     'quiet': True,
                     'progress_hooks': [hooks.hook],
-                    'format': 'bestaudio/best', 
+                    'format': 'bestaudio/best', # 音質優先で選択
                     'noplaylist': True,
-                    'cachedir': False, # キャッシュ無効化
-                    'http_headers': {
-                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
-                        'Accept-Language': 'en-US,en;q=0.9',
-                    }
                 }
-                if cookie_path: 
-                    ydl_opts['cookiefile'] = cookie_path
+                if cookie_path: ydl_opts['cookiefile'] = cookie_path
 
                 postprocessors = [{'key': 'FFmpegExtractAudio','preferredcodec': 'mp3'}]
                 if quality_val != '0':
@@ -289,11 +274,8 @@ if mode == "YouTubeダウンロード":
 
                     single_status.markdown('<i class="fa-solid fa-circle-check" style="color:#00ff88"></i> 完了', unsafe_allow_html=True)
                 except Exception as e:
-                    # 403エラーの場合の特別なメッセージ
-                    if "403" in str(e):
-                        single_status.error("403 Forbidden: YouTubeがアクセスを拒否しました。Cookiesの設定が必要です。")
-                    else:
-                        single_status.error(f"エラー: {e}")
+                    single_status.error(f"エラー: {e}")
+                    # ダウンロードエラーでも続行する場合はcontinue
                     continue
                 
                 main_progress.progress((idx + 1) / total_videos)
@@ -339,7 +321,7 @@ if mode == "YouTubeダウンロード":
                         st.session_state.stage = 'preview'
                         st.rerun()
                     else:
-                        st.warning("情報の取得に失敗しました。URLを確認するか、Cookiesを設定してください。")
+                        st.warning("情報の取得に失敗しました。URLを確認するか、しばらく待ってから試してください。")
             else:
                 st.warning("URLを入力してください")
 
@@ -426,7 +408,7 @@ if mode == "YouTubeダウンロード":
             st.session_state.stage = 'finished'
             st.rerun()
         else:
-            st.error("ダウンロード可能なファイルがありませんでした。Cookiesの設定を確認してください。")
+            st.error("ダウンロード可能なファイルがありませんでした。")
             if st.button("戻る"):
                 st.session_state.stage = 'preview'
                 st.rerun()
