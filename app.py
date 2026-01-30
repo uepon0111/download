@@ -142,10 +142,11 @@ if mode == "YouTubeダウンロード":
     def create_cookie_file(tmp_dir):
         if "general" in st.secrets and "YOUTUBE_COOKIES" in st.secrets["general"]:
             cookie_content = st.secrets["general"]["YOUTUBE_COOKIES"]
-            cookie_path = os.path.join(tmp_dir, "cookies.txt")
-            with open(cookie_path, "w", encoding="utf-8") as f:
-                f.write(cookie_content)
-            return cookie_path
+            if cookie_content.strip(): # 空でない場合のみ作成
+                cookie_path = os.path.join(tmp_dir, "cookies.txt")
+                with open(cookie_path, "w", encoding="utf-8") as f:
+                    f.write(cookie_content)
+                return cookie_path
         return None
 
     # ── 内部関数: 動画削除コールバック ──
@@ -180,12 +181,29 @@ if mode == "YouTubeダウンロード":
         info_list = []
         with tempfile.TemporaryDirectory() as tmp_dir:
             cookie_path = create_cookie_file(tmp_dir)
-            ydl_opts = {'quiet': True, 'extract_flat': False, 'skip_download': True}
+            
+            # 【修正点】オプションを強化してエラーを回避
+            ydl_opts = {
+                'quiet': True,
+                'extract_flat': False,
+                'skip_download': True,
+                'format': 'best',        # 形式を指定して検索を安定化
+                'noplaylist': True,      # プレイリストURLでも単体動画として処理
+                'check_formats': False,  # メタデータ取得時は厳密なフォーマットチェックをスキップ
+                'ignoreerrors': True,    # エラーでも停止しない
+            }
             if cookie_path: ydl_opts['cookiefile'] = cookie_path
+            
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 for url in urls:
                     try:
+                        # download=Falseで情報のみ取得
                         info = ydl.extract_info(url, download=False)
+                        
+                        if not info:
+                            st.error(f"情報の取得に失敗しました: {url}")
+                            continue
+
                         info_list.append({
                             'title': info.get('title', 'Unknown'),
                             'uploader': info.get('uploader', 'Unknown'),
@@ -199,7 +217,7 @@ if mode == "YouTubeダウンロード":
                             'custom_cover_bytes': None
                         })
                     except Exception as e:
-                        st.error(f"Error: {e}")
+                        st.error(f"Error ({url}): {e}")
         return info_list
 
     def process_download(info_list):
@@ -229,6 +247,8 @@ if mode == "YouTubeダウンロード":
                     'outtmpl': f'{tmp_dir}/{final_filename}.%(ext)s',
                     'quiet': True,
                     'progress_hooks': [hooks.hook],
+                    'format': 'bestaudio/best', # 音質優先で選択
+                    'noplaylist': True,
                 }
                 if cookie_path: ydl_opts['cookiefile'] = cookie_path
 
@@ -242,7 +262,7 @@ if mode == "YouTubeダウンロード":
                     ydl_opts['writethumbnail'] = True
                     postprocessors.append({'key': 'EmbedThumbnail'})
                 
-                ydl_opts.update({'format': 'bestaudio/best', 'postprocessors': postprocessors})
+                ydl_opts.update({'postprocessors': postprocessors})
 
                 try:
                     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -255,6 +275,7 @@ if mode == "YouTubeダウンロード":
                     single_status.markdown('<i class="fa-solid fa-circle-check" style="color:#00ff88"></i> 完了', unsafe_allow_html=True)
                 except Exception as e:
                     single_status.error(f"エラー: {e}")
+                    # ダウンロードエラーでも続行する場合はcontinue
                     continue
                 
                 main_progress.progress((idx + 1) / total_videos)
@@ -299,6 +320,8 @@ if mode == "YouTubeダウンロード":
                         st.session_state.video_infos = infos
                         st.session_state.stage = 'preview'
                         st.rerun()
+                    else:
+                        st.warning("情報の取得に失敗しました。URLを確認するか、しばらく待ってから試してください。")
             else:
                 st.warning("URLを入力してください")
 
@@ -321,7 +344,6 @@ if mode == "YouTubeダウンロード":
                 # レイアウト用のカラムを作成（左：画像、中：編集、右：削除）
                 col_img, col_edit, col_del = st.columns([1.5, 3, 0.5])
                 
-                # ★ポイント: 「編集カラム（入力）」を先に処理して、セッションステートを更新する
                 with col_edit:
                     new_filename = st.text_input("ファイル名 (拡張子なし)", value=info['custom_filename'], key=f"fname_{idx}")
                     c_title, c_artist = st.columns(2)
@@ -340,13 +362,10 @@ if mode == "YouTubeダウンロード":
                     st.session_state.video_infos[idx]['custom_artist'] = new_artist
                     st.session_state.video_infos[idx]['custom_album'] = new_album
                     
-                    # ★ここでアップロード有無を判定し、セッションステートを即時更新
                     if uploaded_cover is not None:
                         st.session_state.video_infos[idx]['custom_cover_bytes'] = uploaded_cover.getvalue()
 
-                # ★ポイント: 「画像カラム（表示）」を後に処理することで、更新された画像データを表示できる
                 with col_img:
-                    # セッションステートから最新の値を取得（アップロード直後のデータも反映される）
                     current_cover = st.session_state.video_infos[idx].get('custom_cover_bytes')
                     default_thumb = info.get('thumbnail')
                     
@@ -431,7 +450,6 @@ elif mode == "MP3タグ編集 (ローカル)":
     
     # ファイルがアップロードされたら解析してセッションに格納
     if uploaded_files:
-        # 既にリストにあるファイルと重複しないかチェックする簡易ロジック（ファイル名ベース）
         current_filenames = [f['original_name'] for f in st.session_state.editor_files]
         
         new_files_added = False
@@ -445,12 +463,10 @@ elif mode == "MP3タグ編集 (ローカル)":
                     
                     audio = MP3(tmp_path, ID3=ID3)
                     
-                    # 既存タグ読み込み (なければ空文字)
                     title = str(audio.tags.get("TIT2", "")) if "TIT2" in audio.tags else ""
                     artist = str(audio.tags.get("TPE1", "")) if "TPE1" in audio.tags else ""
                     album = str(audio.tags.get("TALB", "")) if "TALB" in audio.tags else ""
                     
-                    # 画像データ抽出
                     cover_bytes = None
                     for tag in audio.tags.values():
                         if isinstance(tag, APIC):
@@ -459,7 +475,7 @@ elif mode == "MP3タグ編集 (ローカル)":
                     
                     st.session_state.editor_files.append({
                         'original_name': up_file.name,
-                        'file_data': up_file.getvalue(), # オリジナルデータ保持
+                        'file_data': up_file.getvalue(), 
                         'filename': os.path.splitext(up_file.name)[0],
                         'title': title,
                         'artist': artist,
@@ -468,7 +484,7 @@ elif mode == "MP3タグ編集 (ローカル)":
                         'new_cover_bytes': None
                     })
                     new_files_added = True
-                    os.unlink(tmp_path) # 後始末
+                    os.unlink(tmp_path)
                 except Exception as e:
                     st.error(f"ファイル {up_file.name} の解析エラー: {e}")
 
@@ -485,7 +501,6 @@ elif mode == "MP3タグ編集 (ローカル)":
             st.markdown('<div class="edit-card">', unsafe_allow_html=True)
             col_img, col_info, col_del = st.columns([1.5, 3, 0.5])
             
-            # 【修正点】: 情報・編集カラム（col_info）を先に処理することで、アップロードされた画像の反映を確実にする
             with col_info:
                 new_fname = st.text_input("ファイル名", value=item['filename'], key=f"ed_fn_{idx}")
                 c1, c2 = st.columns(2)
@@ -499,15 +514,12 @@ elif mode == "MP3タグ編集 (ローカル)":
                 if up_cover:
                     st.session_state.editor_files[idx]['new_cover_bytes'] = up_cover.getvalue()
 
-                # ステート更新
                 st.session_state.editor_files[idx]['filename'] = new_fname
                 st.session_state.editor_files[idx]['title'] = new_title
                 st.session_state.editor_files[idx]['artist'] = new_artist
                 st.session_state.editor_files[idx]['album'] = new_album
 
-            # 【修正点】: 画像表示カラム（col_img）を後に実行し、更新されたステートを参照する
             with col_img:
-                # セッションステートから最新のデータを取得
                 current_item = st.session_state.editor_files[idx]
                 display_img = current_item['new_cover_bytes'] if current_item['new_cover_bytes'] else current_item['cover_bytes']
                 if display_img:
@@ -528,15 +540,12 @@ elif mode == "MP3タグ編集 (ローカル)":
                     processed_files = []
                     
                     for item in st.session_state.editor_files:
-                        # 安全なファイル名
                         safe_name = sanitize_filename(item['filename']) + ".mp3"
                         file_path = os.path.join(tmp_dir, safe_name)
                         
-                        # ファイル書き出し
                         with open(file_path, "wb") as f:
                             f.write(item['file_data'])
                         
-                        # タグ適用
                         final_cover = item['new_cover_bytes'] if item['new_cover_bytes'] else item['cover_bytes']
                         apply_id3_tags(
                             file_path,
@@ -547,7 +556,6 @@ elif mode == "MP3タグ編集 (ローカル)":
                         )
                         processed_files.append(safe_name)
 
-                    # ZIP作成
                     if processed_files:
                         zip_io = io.BytesIO()
                         with zipfile.ZipFile(zip_io, 'w', zipfile.ZIP_DEFLATED) as zf:
@@ -557,7 +565,6 @@ elif mode == "MP3タグ編集 (ローカル)":
                         st.success("作成完了！")
                         st.rerun()
 
-        # ダウンロードボタン
         if st.session_state.editor_processed_zip:
             st.markdown("---")
             st.download_button(
