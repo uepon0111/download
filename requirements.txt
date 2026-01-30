@@ -1,3 +1,3 @@
 streamlit
-yt-dlp>=2024.10.00
+yt-dlp>=2025.1.26
 mutagen
